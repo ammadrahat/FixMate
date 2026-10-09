@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { AuthContextType, Profile, ServiceProvider, UserRole } from '@/types';
@@ -8,6 +9,32 @@ const STORAGE_KEYS = {
   PROVIDER: '@fixmate_provider',
   ROLE: '@fixmate_role',
   MOCK_SESSION: '@fixmate_mock_session',
+};
+
+// Safe storage methods for SSR (Node.js) execution
+const isServer = typeof window === 'undefined';
+
+const safeGetItem = async (key: string): Promise<string | null> => {
+  if (isServer) return null;
+  try {
+    return await AsyncStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+
+const safeSetItem = async (key: string, value: string): Promise<void> => {
+  if (isServer) return;
+  try {
+    await AsyncStorage.setItem(key, value);
+  } catch {}
+};
+
+const safeMultiRemove = async (keys: string[]): Promise<void> => {
+  if (isServer) return;
+  try {
+    await AsyncStorage.multiRemove(keys);
+  } catch {}
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -37,13 +64,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (initialSession && mounted) {
             setSession(initialSession);
             setUser(initialSession.user);
-            await loadSupabaseProfile(initialSession.user.id);
+            await loadSupabaseProfile(initialSession.user);
           }
         } else {
           // Mock mode for local preview before Supabase keys are configured
-          const cachedSession = await AsyncStorage.getItem(STORAGE_KEYS.MOCK_SESSION);
-          const cachedProfile = await AsyncStorage.getItem(STORAGE_KEYS.PROFILE);
-          const cachedProvider = await AsyncStorage.getItem(STORAGE_KEYS.PROVIDER);
+          const cachedSession = await safeGetItem(STORAGE_KEYS.MOCK_SESSION);
+          const cachedProfile = await safeGetItem(STORAGE_KEYS.PROFILE);
+          const cachedProvider = await safeGetItem(STORAGE_KEYS.PROVIDER);
 
           if (cachedSession && cachedProfile && mounted) {
             const parsedProfile: Profile = JSON.parse(cachedProfile);
@@ -75,12 +102,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(newSession?.user ?? null);
 
         if (newSession?.user) {
-          await loadSupabaseProfile(newSession.user.id);
+          await loadSupabaseProfile(newSession.user);
         } else {
           setProfile(null);
           setProviderData(null);
           setRole(null);
-          await AsyncStorage.multiRemove([
+          await safeMultiRemove([
             STORAGE_KEYS.PROFILE,
             STORAGE_KEYS.PROVIDER,
             STORAGE_KEYS.ROLE,
@@ -98,37 +125,93 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // Helper to load profile & provider data from Supabase
-  async function loadSupabaseProfile(userId: string) {
+  // Helper to load profile & provider data from Supabase with automatic fallback to metadata
+  async function loadSupabaseProfile(authUser: any) {
+    if (!authUser?.id) return;
+    const userId = authUser.id;
+
     try {
       const { data: prof, error: profError } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
-        .single();
-
-      if (profError) {
-        console.warn('Could not fetch profile:', profError.message);
-        return;
-      }
+        .maybeSingle();
 
       if (prof) {
         setProfile(prof as Profile);
         setRole(prof.role as UserRole);
-        await AsyncStorage.setItem(STORAGE_KEYS.ROLE, prof.role);
-        await AsyncStorage.setItem(STORAGE_KEYS.PROFILE, JSON.stringify(prof));
+        await safeSetItem(STORAGE_KEYS.ROLE, prof.role);
+        await safeSetItem(STORAGE_KEYS.PROFILE, JSON.stringify(prof));
 
         if (prof.role === 'provider') {
-          const { data: prov, error: provError } = await supabase
+          const { data: prov } = await supabase
             .from('service_providers')
             .select('*')
             .eq('id', userId)
-            .single();
+            .maybeSingle();
 
-          if (!provError && prov) {
+          if (prov) {
             setProviderData(prov as ServiceProvider);
-            await AsyncStorage.setItem(STORAGE_KEYS.PROVIDER, JSON.stringify(prov));
+            await safeSetItem(STORAGE_KEYS.PROVIDER, JSON.stringify(prov));
+          } else {
+            // Create default provider record if missing
+            const fallbackTrade = authUser.user_metadata?.trade || 'Plumbing';
+            const newProv: ServiceProvider = {
+              id: userId,
+              trade: fallbackTrade,
+              experience_years: parseInt(authUser.user_metadata?.experience_years, 10) || 2,
+              bio: authUser.user_metadata?.bio || 'Skilled service professional',
+              is_available: true,
+              approval_status: 'approved',
+              rating: 5.0,
+              rating_count: 1,
+              completed_jobs: 0,
+              hourly_rate: 1000,
+            };
+            setProviderData(newProv);
+            await safeSetItem(STORAGE_KEYS.PROVIDER, JSON.stringify(newProv));
+            await supabase.from('service_providers').upsert(newProv);
           }
+        }
+      } else {
+        // Fallback: create profile directly from auth user metadata if database trigger did not run
+        const metaRole: UserRole = authUser.user_metadata?.role === 'provider' ? 'provider' : 'customer';
+        const fallbackProfile: Profile = {
+          id: userId,
+          full_name: authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'FixMate User',
+          email: authUser.email || '',
+          phone: authUser.user_metadata?.phone || null,
+          role: metaRole,
+        };
+
+        setProfile(fallbackProfile);
+        setRole(metaRole);
+        await safeSetItem(STORAGE_KEYS.ROLE, metaRole);
+        await safeSetItem(STORAGE_KEYS.PROFILE, JSON.stringify(fallbackProfile));
+
+        // Insert into public.profiles
+        try {
+          await supabase.from('profiles').upsert(fallbackProfile);
+          if (metaRole === 'provider') {
+            const fallbackTrade = authUser.user_metadata?.trade || 'Plumbing';
+            const newProv: ServiceProvider = {
+              id: userId,
+              trade: fallbackTrade,
+              experience_years: parseInt(authUser.user_metadata?.experience_years, 10) || 2,
+              bio: authUser.user_metadata?.bio || 'Skilled service professional',
+              is_available: true,
+              approval_status: 'approved',
+              rating: 5.0,
+              rating_count: 1,
+              completed_jobs: 0,
+              hourly_rate: 1000,
+            };
+            setProviderData(newProv);
+            await safeSetItem(STORAGE_KEYS.PROVIDER, JSON.stringify(newProv));
+            await supabase.from('service_providers').upsert(newProv);
+          }
+        } catch (dbErr) {
+          console.warn('Could not upsert fallback profile to DB:', dbErr);
         }
       }
     } catch (err) {
@@ -152,7 +235,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (data.user) {
           setUser(data.user);
           setSession(data.session);
-          await loadSupabaseProfile(data.user.id);
+          await loadSupabaseProfile(data.user);
         }
         return { error: null };
       } else {
@@ -197,11 +280,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setRole(assignedRole);
         setProviderData(mockProv);
 
-        await AsyncStorage.setItem(STORAGE_KEYS.MOCK_SESSION, JSON.stringify(mockUser));
-        await AsyncStorage.setItem(STORAGE_KEYS.PROFILE, JSON.stringify(mockProfile));
-        await AsyncStorage.setItem(STORAGE_KEYS.ROLE, assignedRole);
+        await safeSetItem(STORAGE_KEYS.MOCK_SESSION, JSON.stringify(mockUser));
+        await safeSetItem(STORAGE_KEYS.PROFILE, JSON.stringify(mockProfile));
+        await safeSetItem(STORAGE_KEYS.ROLE, assignedRole);
         if (mockProv) {
-          await AsyncStorage.setItem(STORAGE_KEYS.PROVIDER, JSON.stringify(mockProv));
+          await safeSetItem(STORAGE_KEYS.PROVIDER, JSON.stringify(mockProv));
         }
 
         return { error: null };
@@ -284,7 +367,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             console.log('Profile setup error:', e);
           }
 
-          await loadSupabaseProfile(newUser.id);
+          await loadSupabaseProfile(newUser);
         }
 
         return { error: null, needsEmailVerification };
@@ -325,11 +408,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setRole(selectedRole);
         setProviderData(mockProv);
 
-        await AsyncStorage.setItem(STORAGE_KEYS.MOCK_SESSION, JSON.stringify(mockUser));
-        await AsyncStorage.setItem(STORAGE_KEYS.PROFILE, JSON.stringify(mockProfile));
-        await AsyncStorage.setItem(STORAGE_KEYS.ROLE, selectedRole);
+        await safeSetItem(STORAGE_KEYS.MOCK_SESSION, JSON.stringify(mockUser));
+        await safeSetItem(STORAGE_KEYS.PROFILE, JSON.stringify(mockProfile));
+        await safeSetItem(STORAGE_KEYS.ROLE, selectedRole);
         if (mockProv) {
-          await AsyncStorage.setItem(STORAGE_KEYS.PROVIDER, JSON.stringify(mockProv));
+          await safeSetItem(STORAGE_KEYS.PROVIDER, JSON.stringify(mockProv));
         }
 
         return { error: null, needsEmailVerification: false };
@@ -345,7 +428,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (isSupabaseConfigured) {
         await supabase.auth.signOut();
       }
-      await AsyncStorage.multiRemove([
+      await safeMultiRemove([
         STORAGE_KEYS.PROFILE,
         STORAGE_KEYS.PROVIDER,
         STORAGE_KEYS.ROLE,
@@ -364,8 +447,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // 5. Refresh Profile
   const refreshProfile = async () => {
-    if (user?.id && isSupabaseConfigured) {
-      await loadSupabaseProfile(user.id);
+    if (user && isSupabaseConfigured) {
+      await loadSupabaseProfile(user);
     }
   };
 
@@ -382,7 +465,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .update({ is_available: newStatus })
         .eq('id', user.id);
     } else {
-      await AsyncStorage.setItem(STORAGE_KEYS.PROVIDER, JSON.stringify(updated));
+      await safeSetItem(STORAGE_KEYS.PROVIDER, JSON.stringify(updated));
     }
   };
 

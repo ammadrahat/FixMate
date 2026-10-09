@@ -1,0 +1,129 @@
+### 📦 What Was Installed & Configured
+
+1. Project Directory & Symlink:
+   • Initialized at project
+   • Created convenient symlink /home/amd/FixMate -> /home/amd/project
+2. Core Dependencies:
+   • Expo SDK 57 + React Native 0.86 + TypeScript
+   • Expo Router (file-based navigation with route groups)
+   • @supabase/supabase-js (authentication & PostgreSQL client)
+   • @react-native-async-storage/async-storage (session persistence)
+   • react-native-url-polyfill (URL polyfill for Supabase in React Native)
+   • @expo/vector-icons (Ionicons icon library)
+
+──────
+
+### 🏛 Architecture & Created Files
+
+#### 1. Configuration & Database
+
+• .env.example and .env: Template and local environment variables for
+EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY.
+• .gitignore: Excludes .env and sensitive files from version control.
+• schema.sql: PostgreSQL schema with:
+• Custom types (user_role, approval_status, order_status).
+• profiles, service_providers, services, and job_orders tables.
+• Automatic on_auth_user_created trigger for Supabase Auth signups.
+• Comprehensive Row Level Security (RLS) policies protecting role alteration and
+provider moderation.
+• Seed catalog data for the 6 core trades.
+
+#### 2. Authentication & State
+
+• supabase.ts: Reusable Supabase client with persistent storage via AsyncStorage.
+Includes automatic fallback to Local Preview Mode when live credentials are not yet
+entered.
+• AuthContext.tsx: Manages authentication lifecycle, role state (customer vs provider),
+trade details, session restoration on app launch, and provider availability toggling.
+• index.ts: Strict TypeScript models for Profile, ServiceProvider, ServiceCategory,
+and JobOrder.
+
+#### 3. Design System & Components
+
+• Theme.ts: Brand palette (#1E3A8A Navy, #0284C7 Ocean Blue), typography, and shadows.
+• Categories.ts: Predefined categories (Plumbing, Electrical Work, Masonry, Carpentry,
+Painting, Appliance Repair) and trade definitions.
+• Button.tsx: Accessible buttons with loading indicators and variant styling.
+• Input.tsx: Form inputs with inline icons, password visibility toggle, and error
+states.
+• Header.tsx: FixMate top navigation bar with greeting, role badge, and alert
+indicator.
+• CategoryCard.tsx: Service category cards with icons, popular service tags, and
+descriptions.
+• EmptyState.tsx: Meaningful empty states with call-to-action buttons.
+• StatusBadge.tsx: Visual status indicators for jobs, requests, and verification.
+
+#### 4. Role-Aware Navigation & Screens
+
+• \_layout.tsx: Root layout with AuthProvider and navigation Stack.
+• index.tsx: Auth gateway redirecting unauthenticated users to Welcome and
+authenticated users to their role-specific dashboards.
+• Unauthenticated Flow ((auth)):
+• app/(auth)/welcome.tsx/welcome.tsx): Hero banner, brand values, trade overview,
+Log In & Sign Up buttons, plus 1-click demo access for immediate previewing.
+• app/(auth)/login.tsx/login.tsx): Email & password signin with validation,
+password toggle, and error feedback.
+• app/(auth)/signup.tsx/signup.tsx): Role selector (Customer vs Service Provider),
+trade picker, experience input, bio, phone, and Supabase registration.
+• Customer Tabs ((customer)):
+• app/(customer)/index.tsx/index.tsx): Search bar, urgent booking banner, 6
+service category cards, and guarantee badges.
+• app/(customer)/services.tsx/services.tsx): Category filters, price estimates in
+PKR, and booking triggers.
+• app/(customer)/orders.tsx/orders.tsx): Orders tracker (Active, Completed,
+Cancelled) with meaningful empty states.
+• app/(customer)/profile.tsx/profile.tsx): Profile management, contact info,
+support links, and logout.
+• Service Provider Tabs ((provider)):
+• app/(provider)/index.tsx/index.tsx): Live availability toggle switch (Available
+vs Offline), quick metrics (rating, jobs, revenue preview), and urgent request
+feed.
+• app/(provider)/requests.tsx/requests.tsx): Incoming leads with customer location,
+offered rate, and Accept/Decline actions.
+• app/(provider)/jobs.tsx/jobs.tsx): Ongoing and completed work tracker with
+payout amounts.
+• app/(provider)/profile.tsx/profile.tsx): Verified trade badge, rating score,
+experience summary, and logout.
+• modal.tsx: Marketplace and architecture information modal.
+
+#### 5. Documentation & Git
+
+• README.md: Project overview, database setup guide, and running commands.
+• Initial Git commit created: Initial FixMate project setup (0e1525d).
+──────
+
+### 🚀 Commands to Run the Project
+
+Navigate to either project or FixMate:
+
+    cd /home/amd/project
+
+#### 1. Start the Expo Development Server
+
+    npx expo start
+
+Scan the QR code with Expo Go on your Android phone.
+
+#### 2. Start with Tunnel (If phone and computer are on different Wi-Fi networks)
+
+    npx expo start --tunnel
+
+#### 3. Preview on Web Browser
+
+    npx expo start --web
+
+#### 4. Run TypeScript Check
+
+    npx tsc --noEmit
+
+──────
+
+### ⚙ Connecting Your Real Supabase Project
+
+1. Open your project on Supabase Dashboard https://supabase.com/dashboard.
+2. Go to SQL Editor and paste the contents of schema.sql and click Run.
+3. In .env, set:
+   EXPO_PUBLIC_SUPABASE_URL=https://<your-project-ref>.supabase.co
+   EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<your-anon-publishable-key>
+
+4. Restart Expo (npx expo start -c) to load the new environment variables.

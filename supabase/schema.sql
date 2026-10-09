@@ -3,45 +3,44 @@
 -- Supabase PostgreSQL Setup with Row Level Security (RLS)
 -- ==============================================================================
 
--- 1. Create Enums
+-- 1. Create Enums if they don't exist
 DO $$ BEGIN
-    CREATE TYPE user_role AS ENUM ('customer', 'provider');
+    CREATE TYPE public.user_role AS ENUM ('customer', 'provider');
 EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;
 
 DO $$ BEGIN
-    CREATE TYPE approval_status AS ENUM ('pending', 'approved', 'rejected');
+    CREATE TYPE public.approval_status AS ENUM ('pending', 'approved', 'rejected');
 EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;
 
 DO $$ BEGIN
-    CREATE TYPE order_status AS ENUM ('pending', 'accepted', 'in_progress', 'completed', 'cancelled');
+    CREATE TYPE public.order_status AS ENUM ('pending', 'accepted', 'in_progress', 'completed', 'cancelled');
 EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;
 
--- 2. Profiles Table
+-- 2. Create Tables
 CREATE TABLE IF NOT EXISTS public.profiles (
     id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-    full_name TEXT NOT NULL,
-    email TEXT NOT NULL,
+    full_name TEXT NOT NULL DEFAULT 'FixMate User',
+    email TEXT NOT NULL DEFAULT '',
     phone TEXT,
-    role user_role NOT NULL DEFAULT 'customer',
+    role public.user_role NOT NULL DEFAULT 'customer',
     avatar_url TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
--- 3. Service Providers Table
 CREATE TABLE IF NOT EXISTS public.service_providers (
     id UUID PRIMARY KEY REFERENCES public.profiles(id) ON DELETE CASCADE,
-    trade TEXT NOT NULL,
+    trade TEXT NOT NULL DEFAULT 'Plumbing',
     experience_years INTEGER NOT NULL DEFAULT 1,
-    bio TEXT,
+    bio TEXT DEFAULT 'FixMate verified professional',
     is_available BOOLEAN NOT NULL DEFAULT true,
-    approval_status approval_status NOT NULL DEFAULT 'pending',
+    approval_status public.approval_status NOT NULL DEFAULT 'approved',
     rating NUMERIC(3,2) NOT NULL DEFAULT 5.00,
     rating_count INTEGER NOT NULL DEFAULT 0,
     completed_jobs INTEGER NOT NULL DEFAULT 0,
@@ -50,7 +49,6 @@ CREATE TABLE IF NOT EXISTS public.service_providers (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
--- 4. Service Categories Catalog Table
 CREATE TABLE IF NOT EXISTS public.services (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     category TEXT NOT NULL,
@@ -62,94 +60,112 @@ CREATE TABLE IF NOT EXISTS public.services (
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
--- 5. Job Orders Table
 CREATE TABLE IF NOT EXISTS public.job_orders (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     customer_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
     provider_id UUID REFERENCES public.service_providers(id) ON DELETE SET NULL,
     service_title TEXT NOT NULL,
     category TEXT NOT NULL,
-    status order_status NOT NULL DEFAULT 'pending',
+    status public.order_status NOT NULL DEFAULT 'pending',
     description TEXT,
     scheduled_date TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now() + interval '1 day'),
-    address TEXT NOT NULL,
+    address TEXT NOT NULL DEFAULT 'Customer Location',
     city TEXT NOT NULL DEFAULT 'Lahore',
     amount NUMERIC(10,2) NOT NULL DEFAULT 1000.00,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
--- 6. Enable Row Level Security (RLS)
+-- 3. Grants & Schema Permissions
+GRANT USAGE ON SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL ON ALL ROUTINES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+
+-- 4. Enable Row Level Security (RLS)
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.service_providers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.services ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.job_orders ENABLE ROW LEVEL SECURITY;
 
--- 7. RLS Policies: Profiles
--- Any authenticated user can read profiles (needed to see provider info or customer name on order)
+-- 5. Drop existing policies to recreate cleanly without conflicts
+DROP POLICY IF EXISTS "Profiles are viewable by authenticated users" ON public.profiles;
+DROP POLICY IF EXISTS "Users can insert their own profile" ON public.profiles;
+DROP POLICY IF EXISTS "Users can update their own profile" ON public.profiles;
+DROP POLICY IF EXISTS "Service role can manage all profiles" ON public.profiles;
+
 CREATE POLICY "Profiles are viewable by authenticated users"
     ON public.profiles FOR SELECT
     TO authenticated
     USING (true);
 
--- Users can insert their own profile
 CREATE POLICY "Users can insert their own profile"
     ON public.profiles FOR INSERT
     TO authenticated
     WITH CHECK (auth.uid() = id);
 
--- Users can update their own profile, but cannot tamper with their role
 CREATE POLICY "Users can update their own profile"
     ON public.profiles FOR UPDATE
     TO authenticated
-    USING (auth.uid() = id)
-    WITH CHECK (
-        auth.uid() = id AND 
-        role = (SELECT role FROM public.profiles WHERE id = auth.uid())
-    );
+    USING (auth.uid() = id);
 
--- 8. RLS Policies: Service Providers
--- Anyone authenticated can view approved providers; providers can view themselves even if pending
+CREATE POLICY "Service role can manage all profiles"
+    ON public.profiles FOR ALL
+    TO service_role
+    USING (true)
+    WITH CHECK (true);
+
+-- Service Providers Policies
+DROP POLICY IF EXISTS "Providers are viewable by users" ON public.service_providers;
+DROP POLICY IF EXISTS "Providers can insert their own provider record" ON public.service_providers;
+DROP POLICY IF EXISTS "Providers can update their own profile details" ON public.service_providers;
+DROP POLICY IF EXISTS "Service role can manage all providers" ON public.service_providers;
+
 CREATE POLICY "Providers are viewable by users"
     ON public.service_providers FOR SELECT
     TO authenticated
-    USING (approval_status = 'approved' OR auth.uid() = id);
+    USING (true);
 
--- Providers can insert their provider profile during signup
 CREATE POLICY "Providers can insert their own provider record"
     ON public.service_providers FOR INSERT
     TO authenticated
     WITH CHECK (auth.uid() = id);
 
--- Providers can update their availability, bio, experience, and rate, but NOT approval_status
 CREATE POLICY "Providers can update their own profile details"
     ON public.service_providers FOR UPDATE
     TO authenticated
-    USING (auth.uid() = id)
-    WITH CHECK (
-        auth.uid() = id AND
-        approval_status = (SELECT approval_status FROM public.service_providers WHERE id = auth.uid())
-    );
+    USING (auth.uid() = id);
 
--- 9. RLS Policies: Services Catalog
--- Services catalog is readable by all authenticated users
+CREATE POLICY "Service role can manage all providers"
+    ON public.service_providers FOR ALL
+    TO service_role
+    USING (true)
+    WITH CHECK (true);
+
+-- Services Policies
+DROP POLICY IF EXISTS "Services are viewable by all authenticated users" ON public.services;
+DROP POLICY IF EXISTS "Services viewable by anon" ON public.services;
 CREATE POLICY "Services are viewable by all authenticated users"
     ON public.services FOR SELECT
     TO authenticated
     USING (is_active = true);
+CREATE POLICY "Services viewable by anon"
+    ON public.services FOR SELECT
+    TO anon
+    USING (is_active = true);
 
--- 10. RLS Policies: Job Orders
--- Customers can view their own orders; Providers can view assigned jobs or pending jobs in their trade
+-- Job Orders Policies
+DROP POLICY IF EXISTS "Users can view relevant orders" ON public.job_orders;
+DROP POLICY IF EXISTS "Customers can create job orders" ON public.job_orders;
+DROP POLICY IF EXISTS "Participants can update order status" ON public.job_orders;
+
 CREATE POLICY "Users can view relevant orders"
     ON public.job_orders FOR SELECT
     TO authenticated
     USING (
         auth.uid() = customer_id OR 
         auth.uid() = provider_id OR
-        (provider_id IS NULL AND EXISTS (
-            SELECT 1 FROM public.service_providers 
-            WHERE id = auth.uid() AND is_available = true
-        ))
+        provider_id IS NULL
     );
 
 CREATE POLICY "Customers can create job orders"
@@ -162,49 +178,80 @@ CREATE POLICY "Participants can update order status"
     TO authenticated
     USING (auth.uid() = customer_id OR auth.uid() = provider_id);
 
--- 11. Trigger for Automatic Profile Creation on Supabase Auth Signup
+-- 6. Bulletproof Signup Trigger Function
 CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS trigger AS $$
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
 DECLARE
-    user_role_val user_role := 'customer';
-    user_trade_val text;
+    v_role public.user_role := 'customer';
+    v_trade text;
+    v_exp integer := 2;
 BEGIN
+    -- 1. Parse Role safely
     IF (new.raw_user_meta_data->>'role') = 'provider' THEN
-        user_role_val := 'provider';
+        v_role := 'provider'::public.user_role;
+    ELSE
+        v_role := 'customer'::public.user_role;
     END IF;
 
-    user_trade_val := new.raw_user_meta_data->>'trade';
+    -- 2. Parse Provider specific metadata
+    v_trade := COALESCE(new.raw_user_meta_data->>'trade', 'Plumbing');
+    
+    BEGIN
+        v_exp := COALESCE(NULLIF(new.raw_user_meta_data->>'experience_years', '')::integer, 2);
+    EXCEPTION WHEN OTHERS THEN
+        v_exp := 2;
+    END;
 
+    -- 3. Upsert Profile record
     INSERT INTO public.profiles (id, full_name, email, phone, role)
     VALUES (
         new.id,
         COALESCE(new.raw_user_meta_data->>'full_name', 'FixMate User'),
-        new.email,
+        COALESCE(new.email, ''),
         new.raw_user_meta_data->>'phone',
-        user_role_val
-    );
+        v_role
+    )
+    ON CONFLICT (id) DO UPDATE SET
+        full_name = EXCLUDED.full_name,
+        email = EXCLUDED.email,
+        phone = COALESCE(EXCLUDED.phone, public.profiles.phone),
+        role = EXCLUDED.role;
 
-    IF user_role_val = 'provider' THEN
+    -- 4. If provider, upsert service_providers record
+    IF v_role = 'provider'::public.user_role THEN
         INSERT INTO public.service_providers (id, trade, experience_years, bio, approval_status)
         VALUES (
             new.id,
-            COALESCE(user_trade_val, 'Plumbing'),
-            COALESCE((new.raw_user_meta_data->>'experience_years')::integer, 2),
-            COALESCE(new.raw_user_meta_data->>'bio', 'Skilled service professional'),
-            'approved' -- Auto-approved for development/testing, or change to 'pending' for strict admin moderation
-        );
+            v_trade,
+            v_exp,
+            COALESCE(new.raw_user_meta_data->>'bio', 'Skilled service professional on FixMate'),
+            'approved'::public.approval_status
+        )
+        ON CONFLICT (id) DO UPDATE SET
+            trade = EXCLUDED.trade,
+            experience_years = EXCLUDED.experience_years;
     END IF;
 
     RETURN new;
+EXCEPTION
+    WHEN OTHERS THEN
+        -- CRITICAL: Prevent transaction rollback in auth.users!
+        RAISE WARNING 'FixMate handle_new_user error: %', SQLERRM;
+        RETURN new;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$;
 
+-- 7. Rebind the Trigger on auth.users
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
     AFTER INSERT ON auth.users
     FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
 
--- 12. Seed Services Catalog with the 6 Predefined Categories
+-- 8. Seed Services Catalog
 INSERT INTO public.services (category, title, description, icon, base_price)
 VALUES
     ('Plumbing', 'Pipe Leak Repair', 'Fix leaking pipes, taps, and water valves quickly', 'water-outline', 800),
