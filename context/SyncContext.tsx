@@ -26,6 +26,8 @@ export type SyncOperationType =
   | 'CREATE_ORDER'
   | 'CANCEL_ORDER'
   | 'POSTPONE_ORDER'
+  | 'ACCEPT_ORDER'
+  | 'COMPLETE_ORDER'
   | 'CREATE_SERVICE'
   | 'TOGGLE_SERVICE'
   | 'DELETE_SERVICE';
@@ -109,9 +111,11 @@ export interface SyncContextType {
   createOrder: (orderData: Partial<JobOrder>) => Promise<{ success: boolean; order: JobOrder; isOffline: boolean }>;
   cancelOrder: (orderId: string, reason?: string) => Promise<{ success: boolean; isOffline: boolean }>;
   postponeOrder: (orderId: string, newDate: string, reason?: string) => Promise<{ success: boolean; isOffline: boolean }>;
+  acceptOrder: (orderId: string, providerId?: string, providerName?: string) => Promise<{ success: boolean; isOffline: boolean }>;
+  completeOrder: (orderId: string) => Promise<{ success: boolean; isOffline: boolean }>;
   createService: (serviceData: Partial<ProviderService>) => Promise<{ success: boolean; service: ProviderService; isOffline: boolean }>;
-  toggleService: (serviceId: string) => Promise<{ success: boolean; isOffline: boolean }>;
-  deleteService: (serviceId: string) => Promise<{ success: boolean; isOffline: boolean }>;
+  toggleService: (serviceId: string, requesterId?: string) => Promise<{ success: boolean; isOffline: boolean }>;
+  deleteService: (serviceId: string, requesterId?: string) => Promise<{ success: boolean; isOffline: boolean }>;
   refreshOrders: () => Promise<void>;
   refreshServices: () => Promise<void>;
   clearQueue: () => Promise<void>;
@@ -380,6 +384,26 @@ export function SyncProvider({
                 if (error) throw error;
                 break;
               }
+              case 'ACCEPT_ORDER': {
+                const { error } = await supabase
+                  .from('job_orders')
+                  .update({
+                    status: 'accepted',
+                    provider_id: item.payload.providerId,
+                    provider_name: item.payload.providerName,
+                  })
+                  .eq('id', item.payload.orderId);
+                if (error) throw error;
+                break;
+              }
+              case 'COMPLETE_ORDER': {
+                const { error } = await supabase
+                  .from('job_orders')
+                  .update({ status: 'completed' })
+                  .eq('id', item.payload.orderId);
+                if (error) throw error;
+                break;
+              }
               case 'CREATE_SERVICE': {
                 const { error } = await supabase
                   .from('provider_services')
@@ -566,6 +590,106 @@ export function SyncProvider({
     [isOnline, loadOrdersFromCache, saveOrdersToCache, addToQueue]
   );
 
+  const acceptOrder = useCallback(
+    async (
+      orderId: string,
+      providerId?: string,
+      providerName?: string
+    ): Promise<{ success: boolean; isOffline: boolean }> => {
+      const assignedProviderId = providerId || currentUserId;
+      const assignedProviderName = providerName || 'Verified Provider';
+
+      // 1. Optimistically update local cache
+      const currentOrders = await loadOrdersFromCache();
+      const updatedOrders = currentOrders.map((ord) =>
+        ord.id === orderId
+          ? {
+              ...ord,
+              status: 'accepted' as JobStatus,
+              provider_id: assignedProviderId,
+              provider_name: assignedProviderName,
+            }
+          : ord
+      );
+      await saveOrdersToCache(updatedOrders);
+
+      // 2. Try online sync
+      let isOffline = true;
+      if (isOnline && isSupabaseConfigured) {
+        try {
+          const { error } = await supabase
+            .from('job_orders')
+            .update({
+              status: 'accepted',
+              provider_id: assignedProviderId,
+              provider_name: assignedProviderName,
+            })
+            .eq('id', orderId);
+
+          if (!error) {
+            isOffline = false;
+          } else {
+            await addToQueue('ACCEPT_ORDER', {
+              orderId,
+              providerId: assignedProviderId,
+              providerName: assignedProviderName,
+            });
+          }
+        } catch {
+          await addToQueue('ACCEPT_ORDER', {
+            orderId,
+            providerId: assignedProviderId,
+            providerName: assignedProviderName,
+          });
+        }
+      } else {
+        await addToQueue('ACCEPT_ORDER', {
+          orderId,
+          providerId: assignedProviderId,
+          providerName: assignedProviderName,
+        });
+      }
+
+      return { success: true, isOffline };
+    },
+    [currentUserId, isOnline, loadOrdersFromCache, saveOrdersToCache, addToQueue]
+  );
+
+  const completeOrder = useCallback(
+    async (orderId: string): Promise<{ success: boolean; isOffline: boolean }> => {
+      // 1. Optimistically update local cache
+      const currentOrders = await loadOrdersFromCache();
+      const updatedOrders = currentOrders.map((ord) =>
+        ord.id === orderId ? { ...ord, status: 'completed' as JobStatus } : ord
+      );
+      await saveOrdersToCache(updatedOrders);
+
+      // 2. Try online sync
+      let isOffline = true;
+      if (isOnline && isSupabaseConfigured) {
+        try {
+          const { error } = await supabase
+            .from('job_orders')
+            .update({ status: 'completed' })
+            .eq('id', orderId);
+
+          if (!error) {
+            isOffline = false;
+          } else {
+            await addToQueue('COMPLETE_ORDER', { orderId });
+          }
+        } catch {
+          await addToQueue('COMPLETE_ORDER', { orderId });
+        }
+      } else {
+        await addToQueue('COMPLETE_ORDER', { orderId });
+      }
+
+      return { success: true, isOffline };
+    },
+    [isOnline, loadOrdersFromCache, saveOrdersToCache, addToQueue]
+  );
+
   const createService = useCallback(
     async (
       serviceData: Partial<ProviderService>
@@ -574,6 +698,7 @@ export function SyncProvider({
       const newService: ProviderService = {
         id: serviceData.id || `srv-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
         provider_id: serviceData.provider_id || currentUserId,
+        provider_name: serviceData.provider_name || 'FixMate Verified Pro',
         title: serviceData.title || 'Professional Handyman Service',
         category: serviceData.category || 'General Repair',
         description: serviceData.description || 'Quality repair and maintenance guaranteed.',
@@ -611,8 +736,13 @@ export function SyncProvider({
   );
 
   const toggleService = useCallback(
-    async (serviceId: string): Promise<{ success: boolean; isOffline: boolean }> => {
+    async (serviceId: string, requesterId?: string): Promise<{ success: boolean; isOffline: boolean }> => {
       const currentServices = await loadServicesFromCache();
+      const existing = currentServices.find((s) => s.id === serviceId);
+      if (existing && requesterId && existing.provider_id && existing.provider_id !== requesterId) {
+        throw new Error('Unauthorized: You can only edit services you created.');
+      }
+
       let targetService: ProviderService | undefined;
       const updatedServices = currentServices.map((s) => {
         if (s.id === serviceId) {
@@ -657,8 +787,13 @@ export function SyncProvider({
   );
 
   const deleteService = useCallback(
-    async (serviceId: string): Promise<{ success: boolean; isOffline: boolean }> => {
+    async (serviceId: string, requesterId?: string): Promise<{ success: boolean; isOffline: boolean }> => {
       const currentServices = await loadServicesFromCache();
+      const existing = currentServices.find((s) => s.id === serviceId);
+      if (existing && requesterId && existing.provider_id && existing.provider_id !== requesterId) {
+        throw new Error('Unauthorized: You can only delete services you created.');
+      }
+
       const updatedServices = currentServices.filter((s) => s.id !== serviceId);
       await saveServicesToCache(updatedServices);
 
@@ -759,6 +894,8 @@ export function SyncProvider({
         createOrder,
         cancelOrder,
         postponeOrder,
+        acceptOrder,
+        completeOrder,
         createService,
         toggleService,
         deleteService,
@@ -800,6 +937,8 @@ export function useSyncedOrders(filterCustomerId?: string) {
     createOrder: sync.createOrder,
     cancelOrder: sync.cancelOrder,
     postponeOrder: sync.postponeOrder,
+    acceptOrder: sync.acceptOrder,
+    completeOrder: sync.completeOrder,
     refreshOrders: sync.refreshOrders,
     syncNow: sync.syncNow,
   };

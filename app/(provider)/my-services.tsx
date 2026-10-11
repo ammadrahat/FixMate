@@ -26,7 +26,8 @@ import { ProviderService } from '@/types';
 
 export default function MyServicesScreen() {
   const { user, profile } = useAuth();
-  const { providerServices, createService, toggleService, deleteService } = useSyncedServices();
+  const currentProviderId = user?.id || profile?.id || 'prov-1';
+  const { providerServices, createService, toggleService, deleteService } = useSyncedServices(currentProviderId);
 
   const [modalVisible, setModalVisible] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -96,9 +97,9 @@ export default function MyServicesScreen() {
 
     setIsSubmitting(true);
     try {
-      const providerId = user?.id || profile?.id || 'provider';
       await createService({
-        provider_id: providerId,
+        provider_id: currentProviderId,
+        provider_name: profile?.full_name || 'FixMate Verified Pro',
         title: title.trim(),
         category,
         description: description.trim(),
@@ -116,14 +117,22 @@ export default function MyServicesScreen() {
   };
 
   const handleToggle = async (service: ProviderService) => {
+    if (service.provider_id && service.provider_id !== currentProviderId) {
+      Alert.alert('Permission Denied', 'You cannot modify a service created by another provider.');
+      return;
+    }
     try {
-      await toggleService(service.id);
+      await toggleService(service.id, currentProviderId);
     } catch (error: any) {
       Alert.alert('Error', error?.message || 'Failed to update service status.');
     }
   };
 
   const handleDelete = (service: ProviderService) => {
+    if (service.provider_id && service.provider_id !== currentProviderId) {
+      Alert.alert('Permission Denied', 'You cannot delete a service created by another provider.');
+      return;
+    }
     Alert.alert(
       'Delete Service Ad',
       `Are you sure you want to delete "${service.title}"? This action cannot be undone.`,
@@ -134,7 +143,7 @@ export default function MyServicesScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              await deleteService(service.id);
+              await deleteService(service.id, currentProviderId);
             } catch (error: any) {
               Alert.alert('Error', error?.message || 'Failed to delete service.');
             }

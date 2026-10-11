@@ -13,13 +13,27 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, BorderRadius, Shadows } from '@/constants/Theme';
 import { Header } from '@/components/Header';
 import { useAuth } from '@/context/AuthContext';
+import { useSyncedOrders } from '@/context/SyncContext';
 
 export default function ProviderDashboardScreen() {
   const router = useRouter();
-  const { profile, providerData, toggleAvailability } = useAuth();
+  const { user, profile, providerData, toggleAvailability } = useAuth();
+  const currentProviderId = user?.id || profile?.id || 'prov-1';
+  const { orders } = useSyncedOrders();
 
   const isAvailable = providerData?.is_available ?? true;
   const trade = providerData?.trade || 'Home Services Technician';
+
+  const newRequests = orders.filter((o) =>
+    o.status === 'pending' && (!o.provider_id || o.provider_id === currentProviderId)
+  );
+
+  const activeJobs = orders.filter((o) =>
+    (o.status === 'in_progress' || o.status === 'accepted') &&
+    (!o.provider_id || o.provider_id === currentProviderId)
+  );
+
+  const latestPending = newRequests[0];
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -61,21 +75,29 @@ export default function ProviderDashboardScreen() {
 
         {/* Stats Grid */}
         <View style={styles.statsGrid}>
-          <View style={[styles.statBox, Shadows.card]}>
+          <TouchableOpacity
+            style={[styles.statBox, Shadows.card]}
+            onPress={() => router.push('/(provider)/requests')}
+            activeOpacity={0.8}
+          >
             <View style={[styles.statIconBox, { backgroundColor: Colors.accentLight }]}>
               <Ionicons name="notifications" size={20} color={Colors.accent} />
             </View>
-            <Text style={styles.statValue}>3</Text>
+            <Text style={styles.statValue}>{newRequests.length}</Text>
             <Text style={styles.statLabel}>New Requests</Text>
-          </View>
+          </TouchableOpacity>
 
-          <View style={[styles.statBox, Shadows.card]}>
+          <TouchableOpacity
+            style={[styles.statBox, Shadows.card]}
+            onPress={() => router.push('/(provider)/jobs')}
+            activeOpacity={0.8}
+          >
             <View style={[styles.statIconBox, { backgroundColor: '#DCFCE7' }]}>
               <Ionicons name="briefcase" size={20} color={Colors.success} />
             </View>
-            <Text style={styles.statValue}>2</Text>
+            <Text style={styles.statValue}>{activeJobs.length}</Text>
             <Text style={styles.statLabel}>Active Jobs</Text>
-          </View>
+          </TouchableOpacity>
 
           <View style={[styles.statBox, Shadows.card]}>
             <View style={[styles.statIconBox, { backgroundColor: '#FEF3C7' }]}>
@@ -99,20 +121,31 @@ export default function ProviderDashboardScreen() {
           <View style={styles.requestHeader}>
             <View style={styles.alertBadge}>
               <Ionicons name="flash" size={14} color="#B45309" />
-              <Text style={styles.alertBadgeText}>URGENT REQUEST</Text>
+              <Text style={styles.alertBadgeText}>
+                {latestPending ? 'URGENT REQUEST' : 'JOB RADAR'}
+              </Text>
             </View>
-            <Text style={styles.requestTime}>12 mins ago</Text>
+            <Text style={styles.requestTime}>
+              {latestPending ? latestPending.scheduled_date : 'All caught up'}
+            </Text>
           </View>
 
-          <Text style={styles.requestService}>Main Distribution Breaker Tripping</Text>
+          <Text style={styles.requestService}>
+            {latestPending ? latestPending.service_title : 'No Pending Requests Right Now'}
+          </Text>
           <Text style={styles.requestLocation}>
-            <Ionicons name="location-outline" size={14} color={Colors.textSecondary} /> Model Town, Block C, Lahore
+            <Ionicons name="location-outline" size={14} color={Colors.textSecondary} />{' '}
+            {latestPending
+              ? `${latestPending.address}${latestPending.city ? `, ${latestPending.city}` : ''}`
+              : 'Stand by for upcoming customer bookings in your area'}
           </Text>
 
           <View style={styles.requestFooter}>
             <View>
               <Text style={styles.offeredLabel}>Offered Rate</Text>
-              <Text style={styles.offeredValue}>Rs. 1,500</Text>
+              <Text style={styles.offeredValue}>
+                {latestPending ? `Rs. ${latestPending.amount.toLocaleString()}` : 'Standard Rates'}
+              </Text>
             </View>
             <TouchableOpacity
               style={styles.actionBtn}

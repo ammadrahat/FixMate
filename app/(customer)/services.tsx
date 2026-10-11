@@ -20,7 +20,7 @@ import { Header } from '@/components/Header';
 import { EmptyState } from '@/components/EmptyState';
 import { SERVICE_CATEGORIES } from '@/constants/Categories';
 import { useAuth } from '@/context/AuthContext';
-import { useSyncedOrders } from '@/context/SyncContext';
+import { useSyncedOrders, useSyncedServices } from '@/context/SyncContext';
 import { JobOrder } from '@/types';
 
 interface ServiceDetail {
@@ -31,6 +31,20 @@ interface ServiceDetail {
   duration: string;
   description: string;
   icon: keyof typeof Ionicons.glyphMap;
+  provider_id?: string;
+  provider_name?: string;
+  isProviderAd?: boolean;
+}
+
+function getCategoryIcon(cat: string): keyof typeof Ionicons.glyphMap {
+  const lower = (cat || '').toLowerCase();
+  if (lower.includes('plumb')) return 'water';
+  if (lower.includes('electr')) return 'flash';
+  if (lower.includes('carp')) return 'hammer';
+  if (lower.includes('paint')) return 'color-palette';
+  if (lower.includes('appliance') || lower.includes('ac') || lower.includes('inverter')) return 'snow';
+  if (lower.includes('mason') || lower.includes('tile')) return 'grid';
+  return 'construct';
 }
 
 const ALL_SERVICES: ServiceDetail[] = [
@@ -177,6 +191,7 @@ export default function CustomerServicesScreen() {
   const params = useLocalSearchParams<{ category?: string }>();
   const { user, profile } = useAuth();
   const { createOrder } = useSyncedOrders();
+  const { allServices } = useSyncedServices();
 
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -199,13 +214,32 @@ export default function CustomerServicesScreen() {
 
   const categories = ['All', ...SERVICE_CATEGORIES.map((c) => c.name)];
 
-  const filtered = ALL_SERVICES.filter((item) => {
+  // Live provider marketplace services combined with default catalog
+  const liveProviderAds: ServiceDetail[] = (allServices || [])
+    .filter((s) => s.is_active !== false)
+    .map((s) => ({
+      id: s.id,
+      category: s.category,
+      title: s.title,
+      price: `Rs. ${s.price.toLocaleString()}`,
+      duration: s.duration || '1-2 hrs',
+      description: s.description,
+      icon: getCategoryIcon(s.category),
+      provider_id: s.provider_id,
+      provider_name: s.provider_name || 'FixMate Verified Pro',
+      isProviderAd: true,
+    }));
+
+  const allAvailableServices = [...liveProviderAds, ...ALL_SERVICES];
+
+  const filtered = allAvailableServices.filter((item) => {
     const matchesCategory =
       selectedCategory === 'All' || item.category === selectedCategory;
     const matchesQuery =
       item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.category.toLowerCase().includes(searchQuery.toLowerCase());
+      item.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      Boolean(item.provider_name && item.provider_name.toLowerCase().includes(searchQuery.toLowerCase()));
     return matchesCategory && matchesQuery;
   });
 
@@ -242,6 +276,8 @@ export default function CustomerServicesScreen() {
         customer_id: user?.id || profile?.id || 'cust-1',
         customer_name: profile?.full_name || 'Valued Customer',
         customer_phone: profile?.phone || '',
+        provider_id: selectedService.provider_id || null,
+        provider_name: selectedService.provider_name || 'FixMate Verified Pro',
         service_title: selectedService.title,
         category: selectedService.category,
         status: 'pending',
@@ -375,6 +411,18 @@ export default function CustomerServicesScreen() {
                           />
                           <Text style={styles.durationText}>{service.duration}</Text>
                         </View>
+                        {service.isProviderAd && (
+                          <View style={styles.providerBadge}>
+                            <Ionicons
+                              name="shield-checkmark"
+                              size={11}
+                              color="#15803D"
+                            />
+                            <Text style={styles.providerBadgeText} numberOfLines={1}>
+                              {service.provider_name || 'Verified Pro'}
+                            </Text>
+                          </View>
+                        )}
                       </View>
                     </View>
                   </View>
@@ -701,6 +749,21 @@ const styles = StyleSheet.create({
   durationText: {
     fontSize: 11,
     color: Colors.textSecondary,
+  },
+  providerBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: BorderRadius.xs,
+  },
+  providerBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#15803D',
+    maxWidth: 120,
   },
   serviceDesc: {
     fontSize: 13,

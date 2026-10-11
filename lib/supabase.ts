@@ -7,11 +7,15 @@ if (Platform.OS !== 'web') {
   require('react-native-url-polyfill/auto');
 }
 
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
+const DEFAULT_SUPABASE_URL = 'https://rbrqtclkcxpaeqmwdhrl.supabase.co';
+const DEFAULT_SUPABASE_ANON_KEY =
+  'sb_publishable__PGM3CEeSXZoLkHo1nlBrw_Z-7ZXEHS';
+
+const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || DEFAULT_SUPABASE_URL;
 const supabaseAnonKey =
   process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
   process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
-  '';
+  DEFAULT_SUPABASE_ANON_KEY;
 
 export const isSupabaseConfigured = Boolean(
   supabaseUrl &&

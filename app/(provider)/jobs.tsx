@@ -13,48 +13,27 @@ import { Colors, Spacing, BorderRadius, Shadows } from '@/constants/Theme';
 import { Header } from '@/components/Header';
 import { EmptyState } from '@/components/EmptyState';
 import { StatusBadge } from '@/components/StatusBadge';
-
-interface ProviderJobItem {
-  id: string;
-  customerName: string;
-  customerPhone: string;
-  serviceTitle: string;
-  address: string;
-  status: 'in_progress' | 'completed';
-  date: string;
-  earnings: number;
-}
-
-const INITIAL_JOBS: ProviderJobItem[] = [
-  {
-    id: 'job-501',
-    customerName: 'Ahmed Raza',
-    customerPhone: '+92 301 2345678',
-    serviceTitle: 'Emergency Water Tank Pipe Burst Fix',
-    address: 'Street 4, Sector G, DHA Phase 6, Lahore',
-    status: 'in_progress',
-    date: 'Today, Started 1:00 PM',
-    earnings: 2200,
-  },
-  {
-    id: 'job-502',
-    customerName: 'Zainab Bibi',
-    customerPhone: '+92 322 8765412',
-    serviceTitle: 'Kitchen Sink Drain Replacement',
-    address: 'Main Boulevard, Gulberg II, Lahore',
-    status: 'completed',
-    date: 'Yesterday, Completed 4:30 PM',
-    earnings: 1400,
-  },
-];
+import { useAuth } from '@/context/AuthContext';
+import { useSyncedOrders, SyncStatusBadge } from '@/context/SyncContext';
 
 export default function ProviderJobsScreen() {
-  const [activeTab, setActiveTab] = useState<'ongoing' | 'completed'>('ongoing');
-  const [jobs, setJobs] = useState<ProviderJobItem[]>(INITIAL_JOBS);
+  const { user, profile } = useAuth();
+  const currentProviderId = user?.id || profile?.id || 'prov-1';
+  const { orders, completeOrder } = useSyncedOrders();
 
-  const filtered = jobs.filter((j) =>
-    activeTab === 'ongoing' ? j.status === 'in_progress' : j.status === 'completed'
+  const [activeTab, setActiveTab] = useState<'ongoing' | 'completed'>('ongoing');
+
+  const ongoingJobs = orders.filter((o) =>
+    (o.status === 'in_progress' || o.status === 'accepted') &&
+    (!o.provider_id || o.provider_id === currentProviderId)
   );
+
+  const completedJobs = orders.filter((o) =>
+    o.status === 'completed' &&
+    (!o.provider_id || o.provider_id === currentProviderId)
+  );
+
+  const displayedJobs = activeTab === 'ongoing' ? ongoingJobs : completedJobs;
 
   const handleMarkComplete = (jobId: string) => {
     Alert.alert(
@@ -64,14 +43,13 @@ export default function ProviderJobsScreen() {
         { text: 'Not yet', style: 'cancel' },
         {
           text: 'Yes, Complete',
-          onPress: () => {
-            setJobs((prev) =>
-              prev.map((j) =>
-                j.id === jobId
-                  ? { ...j, status: 'completed', date: 'Just now, Completed' }
-                  : j
-              )
-            );
+          onPress: async () => {
+            try {
+              await completeOrder(jobId);
+              Alert.alert('Job Completed! 🎉', 'The job has been marked complete and moved to your Completed Jobs tab.');
+            } catch (err: any) {
+              Alert.alert('Error', err?.message || 'Failed to complete job.');
+            }
           },
         },
       ]
@@ -82,6 +60,7 @@ export default function ProviderJobsScreen() {
     <SafeAreaView style={styles.safeArea}>
       <Header title="My Jobs" subtitle="Track in-progress service visits and earnings" />
       <View style={styles.container}>
+        <SyncStatusBadge />
         {/* Tab switcher */}
         <View style={styles.tabBar}>
           <TouchableOpacity
@@ -94,7 +73,7 @@ export default function ProviderJobsScreen() {
                 activeTab === 'ongoing' && styles.tabTextActive,
               ]}
             >
-              Ongoing Jobs
+              Ongoing Jobs ({ongoingJobs.length})
             </Text>
           </TouchableOpacity>
 
@@ -108,7 +87,7 @@ export default function ProviderJobsScreen() {
                 activeTab === 'completed' && styles.tabTextActive,
               ]}
             >
-              Completed Jobs
+              Completed Jobs ({completedJobs.length})
             </Text>
           </TouchableOpacity>
         </View>
@@ -117,51 +96,59 @@ export default function ProviderJobsScreen() {
           contentContainerStyle={styles.listContainer}
           showsVerticalScrollIndicator={false}
         >
-          {filtered.length === 0 ? (
+          {displayedJobs.length === 0 ? (
             <EmptyState
               icon={activeTab === 'ongoing' ? 'briefcase-outline' : 'trophy-outline'}
               title={activeTab === 'ongoing' ? 'No Ongoing Jobs' : 'No Completed Jobs Yet'}
               description={
                 activeTab === 'ongoing'
-                  ? 'You do not have any jobs currently in progress. Head to the Job Requests tab to accept new work.'
+                  ? 'You do not have any jobs currently in progress. Head to the Job Requests tab to accept incoming leads.'
                   : 'Jobs you finish and receive payment for will be permanently archived here for your records.'
               }
             />
           ) : (
-            filtered.map((job) => (
+            displayedJobs.map((job) => (
               <View key={job.id} style={[styles.jobCard, Shadows.card]}>
                 <View style={styles.cardHeader}>
                   <View>
                     <Text style={styles.jobId}>#{job.id}</Text>
-                    <Text style={styles.customerName}>{job.customerName}</Text>
+                    <Text style={styles.customerName}>
+                      {job.customer_name || 'Valued Customer'}
+                    </Text>
                   </View>
                   <StatusBadge status={job.status} />
                 </View>
 
-                <Text style={styles.serviceTitle}>{job.serviceTitle}</Text>
+                <Text style={styles.serviceTitle}>{job.service_title}</Text>
 
                 <View style={styles.metaRow}>
                   <Ionicons name="location-outline" size={15} color={Colors.textSecondary} />
-                  <Text style={styles.metaText}>{job.address}</Text>
+                  <Text style={styles.metaText}>
+                    {job.address}{job.city ? `, ${job.city}` : ''}
+                  </Text>
                 </View>
 
                 <View style={styles.metaRow}>
                   <Ionicons name="time-outline" size={15} color={Colors.textSecondary} />
-                  <Text style={styles.metaText}>{job.date}</Text>
+                  <Text style={styles.metaText}>{job.scheduled_date}</Text>
                 </View>
 
                 <View style={styles.metaRow}>
                   <Ionicons name="call-outline" size={15} color={Colors.textSecondary} />
-                  <Text style={styles.metaText}>{job.customerPhone}</Text>
+                  <Text style={styles.metaText}>
+                    {job.customer_phone || '+92 300 1234567'}
+                  </Text>
                 </View>
 
                 <View style={styles.footerRow}>
                   <View>
                     <Text style={styles.earningsLabel}>Your Payout</Text>
-                    <Text style={styles.earningsValue}>Rs. {job.earnings.toLocaleString()}</Text>
+                    <Text style={styles.earningsValue}>
+                      Rs. {job.amount.toLocaleString()}
+                    </Text>
                   </View>
 
-                  {job.status === 'in_progress' ? (
+                  {job.status !== 'completed' ? (
                     <TouchableOpacity
                       style={styles.completeBtn}
                       onPress={() => handleMarkComplete(job.id)}
@@ -173,7 +160,7 @@ export default function ProviderJobsScreen() {
                   ) : (
                     <View style={styles.ratedPill}>
                       <Ionicons name="star" size={14} color="#D97706" />
-                      <Text style={styles.ratedText}>5.0 ★ Rated</Text>
+                      <Text style={styles.ratedText}>5.0 ★ Completed</Text>
                     </View>
                   )}
                 </View>

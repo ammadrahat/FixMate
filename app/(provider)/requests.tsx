@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   StyleSheet,
   Text,
@@ -8,76 +8,49 @@ import {
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, BorderRadius, Shadows } from '@/constants/Theme';
 import { Header } from '@/components/Header';
 import { EmptyState } from '@/components/EmptyState';
+import { StatusBadge } from '@/components/StatusBadge';
 import { useAuth } from '@/context/AuthContext';
-
-interface JobRequestItem {
-  id: string;
-  customerName: string;
-  customerPhone: string;
-  serviceTitle: string;
-  location: string;
-  scheduleTime: string;
-  amount: number;
-  notes: string;
-}
-
-const INITIAL_REQUESTS: JobRequestItem[] = [
-  {
-    id: 'req-01',
-    customerName: 'Kamran Ashraf',
-    customerPhone: '+92 321 9876543',
-    serviceTitle: 'Main Distribution Breaker Tripping',
-    location: 'Model Town, Block C, Lahore',
-    scheduleTime: 'Today at 3:30 PM',
-    amount: 1500,
-    notes: 'The main 63A circuit breaker trips whenever AC turns on. Need urgent inspection.',
-  },
-  {
-    id: 'req-02',
-    customerName: 'Fatima Zahra',
-    customerPhone: '+92 333 4567890',
-    serviceTitle: 'Ceiling Fan Installation (2 Units)',
-    location: 'Johar Town, Phase 1, Lahore',
-    scheduleTime: 'Tomorrow at 11:00 AM',
-    amount: 1200,
-    notes: 'Brand new Pak Fan units in box. Hook and rod already installed in ceiling.',
-  },
-  {
-    id: 'req-03',
-    customerName: 'Shahid Hussain',
-    customerPhone: '+92 300 8765432',
-    serviceTitle: 'UPS Automatic Switch Troubleshooting',
-    location: 'Faisal Town, Lahore',
-    scheduleTime: 'Tomorrow at 4:00 PM',
-    amount: 2000,
-    notes: 'Inverter does not switch back to WAPDA mains automatically.',
-  },
-];
+import { useSyncedOrders, SyncStatusBadge } from '@/context/SyncContext';
 
 export default function ProviderRequestsScreen() {
-  const { providerData } = useAuth();
-  const [requests, setRequests] = useState<JobRequestItem[]>(INITIAL_REQUESTS);
+  const router = useRouter();
+  const { user, profile, providerData } = useAuth();
+  const currentProviderId = user?.id || profile?.id || 'prov-1';
+  const { orders, acceptOrder, cancelOrder, refreshOrders } = useSyncedOrders();
 
-  const handleAccept = (req: JobRequestItem) => {
-    Alert.alert(
-      'Job Accepted!',
-      `You have accepted the job for ${req.customerName}. It has been moved to your "My Jobs" tab.`,
-      [
-        {
-          text: 'Great',
-          onPress: () => {
-            setRequests((prev) => prev.filter((r) => r.id !== req.id));
-          },
-        },
-      ]
-    );
+  // Show pending requests: either assigned to this provider or unassigned open requests
+  const pendingRequests = orders.filter((o) => {
+    if (o.status !== 'pending') return false;
+    if (o.provider_id && o.provider_id !== currentProviderId) return false;
+    return true;
+  });
+
+  const handleAccept = async (orderId: string, customerName?: string) => {
+    try {
+      await acceptOrder(
+        orderId,
+        currentProviderId,
+        profile?.full_name || 'Verified FixMate Pro'
+      );
+      Alert.alert(
+        'Job Accepted! 🎉',
+        `You have accepted the job for ${customerName || 'the customer'}. It is now active in your "My Jobs" tab.`,
+        [
+          { text: 'Great', onPress: () => router.push('/(provider)/jobs') },
+          { text: 'Stay Here', style: 'cancel' },
+        ]
+      );
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to accept job.');
+    }
   };
 
-  const handleDecline = (reqId: string) => {
+  const handleDecline = (orderId: string) => {
     Alert.alert(
       'Decline Request',
       'Are you sure you want to pass on this job request?',
@@ -86,8 +59,12 @@ export default function ProviderRequestsScreen() {
         {
           text: 'Decline',
           style: 'destructive',
-          onPress: () => {
-            setRequests((prev) => prev.filter((r) => r.id !== reqId));
+          onPress: async () => {
+            try {
+              await cancelOrder(orderId, 'Declined by provider');
+            } catch (err: any) {
+              Alert.alert('Error', err?.message || 'Failed to decline request.');
+            }
           },
         },
       ]
@@ -98,50 +75,69 @@ export default function ProviderRequestsScreen() {
     <SafeAreaView style={styles.safeArea}>
       <Header
         title="Job Requests"
-        subtitle={`Trade: ${providerData?.trade || 'Skilled Provider'}`}
+        subtitle={`Trade: ${providerData?.trade || 'Skilled Provider'} • ${pendingRequests.length} pending`}
       />
       <View style={styles.container}>
+        <SyncStatusBadge />
         <ScrollView
           contentContainerStyle={styles.listContainer}
           showsVerticalScrollIndicator={false}
         >
-          {requests.length === 0 ? (
+          {pendingRequests.length === 0 ? (
             <EmptyState
               icon="notifications-off-outline"
               title="No Pending Job Requests"
               description="You have responded to all current incoming job leads. Keep your status 'Available' to receive notifications as soon as a customer books in your trade!"
               actionTitle="Refresh Requests"
-              onActionPress={() => setRequests(INITIAL_REQUESTS)}
+              onActionPress={refreshOrders}
             />
           ) : (
-            requests.map((item) => (
+            pendingRequests.map((item) => (
               <View key={item.id} style={[styles.card, Shadows.card]}>
                 <View style={styles.cardHeader}>
                   <View style={styles.customerBox}>
-                    <Text style={styles.customerName}>{item.customerName}</Text>
-                    <Text style={styles.customerPhone}>{item.customerPhone}</Text>
+                    <Text style={styles.customerName}>
+                      {item.customer_name || 'Valued Customer'}
+                    </Text>
+                    <Text style={styles.customerPhone}>
+                      {item.customer_phone || '+92 300 1234567'}
+                    </Text>
                   </View>
                   <View style={styles.amountPill}>
-                    <Text style={styles.amountText}>Rs. {item.amount.toLocaleString()}</Text>
+                    <Text style={styles.amountText}>
+                      Rs. {item.amount.toLocaleString()}
+                    </Text>
                   </View>
                 </View>
 
-                <Text style={styles.serviceTitle}>{item.serviceTitle}</Text>
+                <View style={styles.titleRow}>
+                  <Text style={styles.serviceTitle}>{item.service_title}</Text>
+                  <StatusBadge status={item.status} />
+                </View>
 
                 <View style={styles.metaRow}>
                   <Ionicons name="location-outline" size={15} color={Colors.textSecondary} />
-                  <Text style={styles.metaText}>{item.location}</Text>
+                  <Text style={styles.metaText}>
+                    {item.address}{item.city ? `, ${item.city}` : ''}
+                  </Text>
                 </View>
 
                 <View style={styles.metaRow}>
                   <Ionicons name="time-outline" size={15} color={Colors.textSecondary} />
-                  <Text style={styles.metaText}>{item.scheduleTime}</Text>
+                  <Text style={styles.metaText}>{item.scheduled_date}</Text>
                 </View>
 
-                <View style={styles.notesBox}>
-                  <Text style={styles.notesLabel}>Customer Note:</Text>
-                  <Text style={styles.notesText}>{item.notes}</Text>
+                <View style={styles.metaRow}>
+                  <Ionicons name="pricetag-outline" size={15} color={Colors.textSecondary} />
+                  <Text style={styles.metaText}>Category: {item.category}</Text>
                 </View>
+
+                {Boolean(item.description) && (
+                  <View style={styles.notesBox}>
+                    <Text style={styles.notesLabel}>Customer Note:</Text>
+                    <Text style={styles.notesText}>{item.description}</Text>
+                  </View>
+                )}
 
                 <View style={styles.actionsRow}>
                   <TouchableOpacity
@@ -154,7 +150,7 @@ export default function ProviderRequestsScreen() {
 
                   <TouchableOpacity
                     style={styles.acceptBtn}
-                    onPress={() => handleAccept(item)}
+                    onPress={() => handleAccept(item.id, item.customer_name)}
                     activeOpacity={0.8}
                   >
                     <Ionicons name="checkmark-circle-outline" size={18} color="#FFFFFF" />
@@ -221,12 +217,19 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#15803D',
   },
+  titleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 6,
+    marginBottom: 4,
+  },
   serviceTitle: {
     fontSize: 15,
     fontWeight: '700',
     color: Colors.primary,
-    marginTop: 6,
-    marginBottom: 6,
+    flex: 1,
+    marginRight: 8,
   },
   metaRow: {
     flexDirection: 'row',

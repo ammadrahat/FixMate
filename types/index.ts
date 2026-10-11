@@ -7,6 +7,7 @@ export type JobStatus = 'pending' | 'accepted' | 'in_progress' | 'completed' | '
 export interface ProviderService {
   id: string;
   provider_id: string;
+  provider_name?: string;
   title: string;
   category: string;
   description: string;

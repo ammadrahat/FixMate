@@ -61,6 +61,19 @@ CREATE TABLE IF NOT EXISTS public.services (
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
+CREATE TABLE IF NOT EXISTS public.provider_services (
+    id TEXT PRIMARY KEY,
+    provider_id TEXT NOT NULL,
+    provider_name TEXT DEFAULT 'FixMate Pro Provider',
+    title TEXT NOT NULL,
+    category TEXT NOT NULL,
+    description TEXT NOT NULL,
+    price NUMERIC(10,2) NOT NULL DEFAULT 1000.00,
+    duration TEXT NOT NULL DEFAULT '1-2 Hours',
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+
 CREATE TABLE IF NOT EXISTS public.job_orders (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     customer_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
@@ -87,6 +100,7 @@ GRANT ALL ON ALL ROUTINES IN SCHEMA public TO postgres, anon, authenticated, ser
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.service_providers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.services ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.provider_services ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.job_orders ENABLE ROW LEVEL SECURITY;
 
 -- 5. Drop existing policies to recreate cleanly without conflicts
@@ -154,6 +168,32 @@ CREATE POLICY "Services viewable by anon"
     ON public.services FOR SELECT
     TO anon
     USING (is_active = true);
+
+-- Provider Services Policies (Marketplace)
+DROP POLICY IF EXISTS "Provider services viewable by all" ON public.provider_services;
+DROP POLICY IF EXISTS "Providers can insert their own services" ON public.provider_services;
+DROP POLICY IF EXISTS "Providers can update their own services" ON public.provider_services;
+DROP POLICY IF EXISTS "Providers can delete their own services" ON public.provider_services;
+
+CREATE POLICY "Provider services viewable by all"
+    ON public.provider_services FOR SELECT
+    TO authenticated, anon
+    USING (true);
+
+CREATE POLICY "Providers can insert their own services"
+    ON public.provider_services FOR INSERT
+    TO authenticated, anon
+    WITH CHECK (true);
+
+CREATE POLICY "Providers can update their own services"
+    ON public.provider_services FOR UPDATE
+    TO authenticated, anon
+    USING (true);
+
+CREATE POLICY "Providers can delete their own services"
+    ON public.provider_services FOR DELETE
+    TO authenticated, anon
+    USING (true);
 
 -- Job Orders Policies
 DROP POLICY IF EXISTS "Users can view relevant orders" ON public.job_orders;
