@@ -5,6 +5,7 @@ import { useEffect } from 'react';
 import 'react-native-reanimated';
 
 import { AuthProvider } from '@/context/AuthContext';
+import { SyncProvider } from '@/context/SyncContext';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -38,7 +39,9 @@ export default function RootLayout() {
 
   return (
     <AuthProvider>
-      <RootLayoutNav />
+      <SyncProvider>
+        <RootLayoutNav />
+      </SyncProvider>
     </AuthProvider>
   );
 }

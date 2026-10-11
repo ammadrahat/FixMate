@@ -34,6 +34,10 @@ export function StatusBadge({ status }: StatusBadgeProps) {
       bg = '#FEE2E2';
       text = '#B91C1C';
       break;
+    case 'postponed':
+      bg = '#FFF7ED';
+      text = '#C2410C';
+      break;
   }
 
   return (

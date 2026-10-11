@@ -2,7 +2,19 @@ export type UserRole = 'customer' | 'provider';
 
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
 
-export type JobStatus = 'pending' | 'accepted' | 'in_progress' | 'completed' | 'cancelled';
+export type JobStatus = 'pending' | 'accepted' | 'in_progress' | 'completed' | 'cancelled' | 'postponed';
+
+export interface ProviderService {
+  id: string;
+  provider_id: string;
+  title: string;
+  category: string;
+  description: string;
+  price: number;
+  duration: string;
+  is_active: boolean;
+  created_at: string;
+}
 
 export interface Profile {
   id: string;

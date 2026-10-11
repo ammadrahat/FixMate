@@ -62,6 +62,19 @@ export default function ProviderTabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="my-services"
+        options={{
+          title: 'My Services',
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? 'pricetag' : 'pricetag-outline'}
+              size={22}
+              color={color}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="profile"
         options={{
           title: 'Profile',

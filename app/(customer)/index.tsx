@@ -93,7 +93,12 @@ export default function CustomerHomeScreen() {
             <CategoryCard
               key={category.id}
               category={category}
-              onPress={() => router.push('/(customer)/services')}
+              onPress={() =>
+                router.push({
+                  pathname: '/(customer)/services',
+                  params: { category: category.name },
+                })
+              }
             />
           ))
         )}
