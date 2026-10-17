@@ -472,7 +472,9 @@ export function SyncProvider({
         customer_id: orderData.customer_id || currentUserId,
         customer_name: orderData.customer_name || 'Valued Customer',
         customer_phone: orderData.customer_phone || '',
+        customer_phone_verified: orderData.customer_phone_verified ?? false,
         provider_id: orderData.provider_id || null,
+
         provider_name: orderData.provider_name || 'Assigned FixMate Provider',
         service_title: orderData.service_title || 'General Maintenance Service',
         category: orderData.category || 'Maintenance',

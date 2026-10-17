@@ -19,9 +19,14 @@ import { Colors, Spacing, BorderRadius, Shadows } from '@/constants/Theme';
 import { Header } from '@/components/Header';
 import { EmptyState } from '@/components/EmptyState';
 import { SERVICE_CATEGORIES } from '@/constants/Categories';
+import { PAKISTAN_CITIES } from '@/constants/Cities';
+import { getBookingDateOptions } from '@/constants/BookingDates';
+import { DropdownSelect } from '@/components/DropdownSelect';
+import { PhoneVerificationModal } from '@/components/PhoneVerificationModal';
 import { useAuth } from '@/context/AuthContext';
 import { useSyncedOrders, useSyncedServices } from '@/context/SyncContext';
 import { JobOrder } from '@/types';
+
 
 interface ServiceDetail {
   id: string;
@@ -189,7 +194,7 @@ const ALL_SERVICES: ServiceDetail[] = [
 
 export default function CustomerServicesScreen() {
   const params = useLocalSearchParams<{ category?: string }>();
-  const { user, profile } = useAuth();
+  const { user, profile, isPhoneVerified, setPhoneVerified } = useAuth();
   const { createOrder } = useSyncedOrders();
   const { allServices } = useSyncedServices();
 
@@ -202,9 +207,15 @@ export default function CustomerServicesScreen() {
   const [selectedService, setSelectedService] = useState<ServiceDetail | null>(null);
   const [address, setAddress] = useState<string>('');
   const [city, setCity] = useState<string>('Lahore');
-  const [preferredDateTime, setPreferredDateTime] = useState<string>('');
+  const [preferredDateTime, setPreferredDateTime] = useState<string>(
+    'Today - Emergency / ASAP (Within 45-60 Mins)'
+  );
+  const [customerPhone, setCustomerPhone] = useState<string>('');
+  const [phoneModalVisible, setPhoneModalVisible] = useState<boolean>(false);
   const [notes, setNotes] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+
+  const dateOptions = getBookingDateOptions();
 
   useEffect(() => {
     if (params?.category && typeof params.category === 'string') {
@@ -247,7 +258,8 @@ export default function CustomerServicesScreen() {
     setSelectedService(service);
     setAddress('');
     setCity('Lahore');
-    setPreferredDateTime('');
+    setPreferredDateTime('Today - Emergency / ASAP (Within 45-60 Mins)');
+    setCustomerPhone(profile?.phone || '');
     setNotes('');
     setModalVisible(true);
   };
@@ -275,7 +287,8 @@ export default function CustomerServicesScreen() {
       const orderData: Partial<JobOrder> = {
         customer_id: user?.id || profile?.id || 'cust-1',
         customer_name: profile?.full_name || 'Valued Customer',
-        customer_phone: profile?.phone || '',
+        customer_phone: customerPhone.trim() || profile?.phone || '',
+        customer_phone_verified: isPhoneVerified,
         provider_id: selectedService.provider_id || null,
         provider_name: selectedService.provider_name || 'FixMate Verified Pro',
         service_title: selectedService.title,
@@ -290,6 +303,7 @@ export default function CustomerServicesScreen() {
         amount: parsedAmount,
         created_at: new Date().toISOString(),
       };
+
 
       const result = await createOrder(orderData);
 
@@ -551,29 +565,96 @@ export default function CustomerServicesScreen() {
                   />
                 </View>
 
-                {/* Field: City */}
+                {/* Field: City (Drag Down Menu) */}
+                <DropdownSelect
+                  label="Service City"
+                  required
+                  value={city}
+                  onSelect={setCity}
+                  options={PAKISTAN_CITIES.map((c) => ({
+                    id: c.id,
+                    label: c.name,
+                    sublabel: c.province,
+                    badge: c.isPopular ? 'Popular' : undefined,
+                  }))}
+                  placeholder="Select city from menu..."
+                  icon="location-outline"
+                  searchable
+                  searchPlaceholder="Search city (e.g. Lahore, Karachi, Islamabad...)"
+                  allowCustomInput
+                  customInputPlaceholder="Type custom city name..."
+                  helperText="Technicians are active across all major cities of Pakistan."
+                />
+
+                {/* Field: Preferred Date & Time (Drag Down Menu) */}
+                <DropdownSelect
+                  label="Preferred Date & Time"
+                  required
+                  value={preferredDateTime}
+                  onSelect={setPreferredDateTime}
+                  options={dateOptions.map((d) => ({
+                    id: d.id,
+                    label: d.label,
+                    badge: d.badge,
+                  }))}
+                  placeholder="Choose convenient date & time slot..."
+                  icon="calendar-outline"
+                  allowCustomInput
+                  customInputPlaceholder="Enter custom date & time (e.g. Tomorrow 3:00 PM)..."
+                  helperText="Emergency bookings arrive within 45-60 mins."
+                />
+
+                {/* Field: Contact Phone & Free Verification */}
                 <View style={styles.fieldGroup}>
-                  <Text style={styles.fieldLabel}>City</Text>
-                  <TextInput
-                    style={styles.textInput}
-                    placeholder="e.g. Lahore"
-                    placeholderTextColor={Colors.textMuted}
-                    value={city}
-                    onChangeText={setCity}
-                  />
+                  <View style={styles.phoneLabelRow}>
+                    <Text style={styles.fieldLabel}>Contact Phone Number</Text>
+                    {isPhoneVerified ? (
+                      <View style={styles.verifiedBadge}>
+                        <Ionicons name="shield-checkmark" size={13} color="#15803D" />
+                        <Text style={styles.verifiedBadgeText}>Verified</Text>
+                      </View>
+                    ) : (
+                      <TouchableOpacity
+                        style={styles.verifyBtn}
+                        onPress={() => setPhoneModalVisible(true)}
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons
+                          name="checkmark-circle-outline"
+                          size={13}
+                          color={Colors.primary}
+                        />
+                        <Text style={styles.verifyBtnText}>Verify Free (OTP)</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  <View style={styles.phoneInputRow}>
+                    <TextInput
+                      style={[styles.textInput, { flex: 1 }]}
+                      placeholder="+92 300 1234567"
+                      placeholderTextColor={Colors.textMuted}
+                      value={customerPhone}
+                      onChangeText={setCustomerPhone}
+                      keyboardType="phone-pad"
+                    />
+                    {!isPhoneVerified && (
+                      <TouchableOpacity
+                        style={styles.inlineVerifyBtn}
+                        onPress={() => setPhoneModalVisible(true)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.inlineVerifyBtnText}>Verify</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                  {!isPhoneVerified && (
+                    <Text style={styles.phoneHint}>
+                      ✨ Verified customer requests receive prioritized technician responses.
+                    </Text>
+                  )}
                 </View>
 
-                {/* Field: Preferred Date & Time */}
-                <View style={styles.fieldGroup}>
-                  <Text style={styles.fieldLabel}>Preferred Date & Time</Text>
-                  <TextInput
-                    style={styles.textInput}
-                    placeholder="e.g. Today 3:00 PM"
-                    placeholderTextColor={Colors.textMuted}
-                    value={preferredDateTime}
-                    onChangeText={setPreferredDateTime}
-                  />
-                </View>
 
                 {/* Field: Optional Notes */}
                 <View style={styles.fieldGroup}>
@@ -628,9 +709,25 @@ export default function CustomerServicesScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* Free Phone Number Verification Modal */}
+      <PhoneVerificationModal
+        visible={phoneModalVisible}
+        initialPhone={customerPhone || profile?.phone || ''}
+        onClose={() => setPhoneModalVisible(false)}
+        onSuccess={(verifiedNumber) => {
+          setCustomerPhone(verifiedNumber);
+          setPhoneVerified(verifiedNumber);
+          Alert.alert(
+            'Phone Verified! 🎉',
+            `Your number ${verifiedNumber} has been successfully verified. Priority booking is now active.`
+          );
+        }}
+      />
     </SafeAreaView>
   );
 }
+
 
 const styles = StyleSheet.create({
   safeArea: {
@@ -951,4 +1048,65 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#FFFFFF',
   },
+  phoneLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  verifiedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: BorderRadius.full,
+  },
+  verifiedBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#15803D',
+  },
+  verifyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: BorderRadius.full,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  verifyBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.primary,
+  },
+  phoneInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  inlineVerifyBtn: {
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 12,
+    height: 44,
+    borderRadius: BorderRadius.md,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  inlineVerifyBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  phoneHint: {
+    fontSize: 11,
+    color: '#15803D',
+    marginTop: 4,
+    fontWeight: '500',
+  },
 });
+

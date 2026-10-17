@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   StyleSheet,
   Text,
@@ -13,11 +13,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, BorderRadius, Shadows } from '@/constants/Theme';
 import { Header } from '@/components/Header';
 import { Button } from '@/components/Button';
+import { PhoneVerificationModal } from '@/components/PhoneVerificationModal';
 import { useAuth } from '@/context/AuthContext';
 
 export default function CustomerProfileScreen() {
   const router = useRouter();
-  const { profile, logout, isMockMode } = useAuth();
+  const { profile, logout, isMockMode, isPhoneVerified, setPhoneVerified } = useAuth();
+  const [phoneModalVisible, setPhoneModalVisible] = useState(false);
+
 
   const handleLogout = () => {
     Alert.alert(
@@ -76,10 +79,28 @@ export default function CustomerProfileScreen() {
           <View style={styles.infoRow}>
             <Ionicons name="call-outline" size={18} color={Colors.textSecondary} />
             <View style={styles.infoCol}>
-              <Text style={styles.infoLabel}>Phone Number</Text>
+              <View style={styles.phoneLabelRow}>
+                <Text style={styles.infoLabel}>Phone Number</Text>
+                {isPhoneVerified || profile?.is_phone_verified ? (
+                  <View style={styles.verifiedTag}>
+                    <Ionicons name="shield-checkmark" size={11} color="#15803D" />
+                    <Text style={styles.verifiedTagText}>Verified</Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.verifyBtn}
+                    onPress={() => setPhoneModalVisible(true)}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="shield-outline" size={11} color={Colors.primary} />
+                    <Text style={styles.verifyBtnText}>Verify Free</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
               <Text style={styles.infoVal}>{profile?.phone || '+92 300 1234567'}</Text>
             </View>
           </View>
+
 
           <View style={styles.infoRow}>
             <Ionicons name="location-outline" size={18} color={Colors.textSecondary} />
@@ -140,9 +161,25 @@ export default function CustomerProfileScreen() {
           style={styles.logoutBtn}
         />
       </ScrollView>
+
+      <PhoneVerificationModal
+        visible={phoneModalVisible}
+        initialPhone={profile?.phone || '+92 300 1234567'}
+        onClose={() => setPhoneModalVisible(false)}
+        onSuccess={(verifiedPhone) => {
+          setPhoneVerified(verifiedPhone);
+          Alert.alert(
+            'Phone Verified! 🎉',
+            `Your number ${verifiedPhone} has been verified and saved to your profile.`
+          );
+        }}
+        title="Verify Profile Phone"
+        description="Verify your phone number with free instant OTP to receive technician updates and dispatch tracking."
+      />
     </SafeAreaView>
   );
 }
+
 
 const styles = StyleSheet.create({
   safeArea: {
@@ -273,4 +310,41 @@ const styles = StyleSheet.create({
   logoutBtn: {
     marginTop: Spacing.sm,
   },
+  phoneLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 2,
+  },
+  verifiedTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 7,
+    paddingVertical: 1,
+    borderRadius: BorderRadius.full,
+  },
+  verifiedTagText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#15803D',
+  },
+  verifyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 8,
+    paddingVertical: 1,
+    borderRadius: BorderRadius.full,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  verifyBtnText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: Colors.primary,
+  },
 });
+

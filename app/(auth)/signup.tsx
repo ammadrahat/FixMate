@@ -16,8 +16,11 @@ import { Colors, Spacing, BorderRadius, Shadows } from '@/constants/Theme';
 import { PREDEFINED_TRADES } from '@/constants/Categories';
 import { Input } from '@/components/Input';
 import { Button } from '@/components/Button';
+import { PhoneVerificationModal } from '@/components/PhoneVerificationModal';
+import { validatePakistaniPhone } from '@/lib/phoneVerification';
 import { useAuth } from '@/context/AuthContext';
 import { UserRole } from '@/types';
+
 
 export default function SignupScreen() {
   const router = useRouter();
@@ -27,6 +30,8 @@ export default function SignupScreen() {
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
+  const [isPhoneVerified, setIsPhoneVerified] = useState(false);
+  const [phoneModalVisible, setPhoneModalVisible] = useState(false);
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
 
@@ -55,10 +60,11 @@ export default function SignupScreen() {
       newErrors.email = 'Please enter a valid email address';
     }
 
+    const phoneValidation = validatePakistaniPhone(phone);
     if (!phone.trim()) {
       newErrors.phone = 'Phone number is required';
-    } else if (phone.trim().length < 10) {
-      newErrors.phone = 'Please enter a valid phone number';
+    } else if (!phoneValidation.isValid) {
+      newErrors.phone = phoneValidation.error || 'Please enter a valid Pakistani mobile number';
     }
 
     if (!password) {
@@ -101,7 +107,9 @@ export default function SignupScreen() {
         trade: role === 'provider' ? trade : undefined,
         experienceYears: role === 'provider' ? parseInt(experienceYears, 10) || 1 : undefined,
         bio: role === 'provider' ? bio.trim() : undefined,
+        isPhoneVerified,
       });
+
 
       if (result.error) {
         setErrorMessage(result.error.message || 'Failed to create account.');
@@ -236,15 +244,52 @@ export default function SignupScreen() {
             error={errors.email}
           />
 
-          <Input
-            label="Phone Number"
-            placeholder="+92 300 1234567"
-            value={phone}
-            onChangeText={setPhone}
-            keyboardType="phone-pad"
-            icon="call-outline"
-            error={errors.phone}
-          />
+          {/* Phone Field with Verification Badge */}
+          <View style={styles.phoneGroup}>
+            <View style={styles.phoneLabelRow}>
+              <Text style={styles.fieldLabel}>Phone Number</Text>
+              {isPhoneVerified ? (
+                <View style={styles.verifiedTag}>
+                  <Ionicons name="shield-checkmark" size={12} color="#15803D" />
+                  <Text style={styles.verifiedTagText}>Verified</Text>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  style={styles.verifyLink}
+                  onPress={() => setPhoneModalVisible(true)}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="shield-outline" size={12} color={Colors.primary} />
+                  <Text style={styles.verifyLinkText}>Verify Free (OTP)</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            <View style={styles.phoneInputRow}>
+              <View style={{ flex: 1 }}>
+                <Input
+                  placeholder="+92 300 1234567"
+                  value={phone}
+                  onChangeText={(val) => {
+                    setPhone(val);
+                    setIsPhoneVerified(false);
+                  }}
+                  keyboardType="phone-pad"
+                  icon="call-outline"
+                  error={errors.phone}
+                />
+              </View>
+              {!isPhoneVerified && (
+                <TouchableOpacity
+                  style={styles.verifyInlineBtn}
+                  onPress={() => setPhoneModalVisible(true)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.verifyInlineBtnText}>Verify</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+
 
           <Input
             label="Password"
@@ -340,9 +385,22 @@ export default function SignupScreen() {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <PhoneVerificationModal
+        visible={phoneModalVisible}
+        initialPhone={phone}
+        onClose={() => setPhoneModalVisible(false)}
+        onSuccess={(verifiedPhone) => {
+          setPhone(verifiedPhone);
+          setIsPhoneVerified(true);
+        }}
+        title="Verify Account Phone"
+        description="Verify your Pakistani mobile number with free instant OTP to enable priority booking and security alerts."
+      />
     </SafeAreaView>
   );
 }
+
 
 const styles = StyleSheet.create({
   safeArea: {
@@ -508,4 +566,62 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: Colors.primary,
   },
+  phoneGroup: {
+    marginBottom: Spacing.sm,
+  },
+  phoneLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  verifiedTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: BorderRadius.full,
+  },
+  verifiedTagText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#15803D',
+  },
+  verifyLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: BorderRadius.full,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  verifyLinkText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.primary,
+  },
+  phoneInputRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  verifyInlineBtn: {
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 12,
+    height: 48,
+    borderRadius: BorderRadius.md,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  verifyInlineBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
 });
+

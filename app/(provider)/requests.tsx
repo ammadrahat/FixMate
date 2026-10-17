@@ -99,11 +99,20 @@ export default function ProviderRequestsScreen() {
                     <Text style={styles.customerName}>
                       {item.customer_name || 'Valued Customer'}
                     </Text>
-                    <Text style={styles.customerPhone}>
-                      {item.customer_phone || '+92 300 1234567'}
-                    </Text>
+                    <View style={styles.phoneVerifiedRow}>
+                      <Text style={styles.customerPhone}>
+                        {item.customer_phone || '+92 300 1234567'}
+                      </Text>
+                      {item.customer_phone_verified && (
+                        <View style={styles.verifiedPhoneTag}>
+                          <Ionicons name="shield-checkmark" size={10} color="#15803D" />
+                          <Text style={styles.verifiedPhoneTagText}>Verified</Text>
+                        </View>
+                      )}
+                    </View>
                   </View>
                   <View style={styles.amountPill}>
+
                     <Text style={styles.amountText}>
                       Rs. {item.amount.toLocaleString()}
                     </Text>
@@ -295,4 +304,25 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#FFFFFF',
   },
+  phoneVerifiedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 2,
+  },
+  verifiedPhoneTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: BorderRadius.xs,
+  },
+  verifiedPhoneTagText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#15803D',
+  },
 });
+

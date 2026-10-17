@@ -19,8 +19,11 @@ import { Colors, Spacing, BorderRadius, Shadows } from '@/constants/Theme';
 import { Header } from '@/components/Header';
 import { EmptyState } from '@/components/EmptyState';
 import { StatusBadge } from '@/components/StatusBadge';
+import { DropdownSelect } from '@/components/DropdownSelect';
+import { getBookingDateOptions } from '@/constants/BookingDates';
 import { useSyncedOrders, SyncStatusBadge } from '@/context/SyncContext';
 import { JobOrder } from '@/types';
+
 
 type TabKey = 'active' | 'postponed' | 'completed' | 'cancelled';
 
@@ -336,6 +339,20 @@ export default function CustomerOrdersScreen() {
                     </Text>
                   </View>
 
+                  {/* Customer Phone & Verification */}
+                  {order.customer_phone ? (
+                    <View style={styles.detailRow}>
+                      <Ionicons name="call-outline" size={15} color={Colors.textSecondary} />
+                      <Text style={styles.detailText}>{order.customer_phone}</Text>
+                      {order.customer_phone_verified && (
+                        <View style={styles.verifiedPhoneTag}>
+                          <Ionicons name="shield-checkmark" size={10} color="#15803D" />
+                          <Text style={styles.verifiedPhoneTagText}>Verified</Text>
+                        </View>
+                      )}
+                    </View>
+                  ) : null}
+
                   {/* Assigned Pro */}
                   {order.provider_name && (
                     <View style={styles.detailRow}>
@@ -343,6 +360,7 @@ export default function CustomerOrdersScreen() {
                       <Text style={styles.detailText}>Assigned Pro: {order.provider_name}</Text>
                     </View>
                   )}
+
 
                   {/* Card Footer with Amount & Actions */}
                   <View style={styles.cardFooter}>
@@ -464,8 +482,25 @@ export default function CustomerOrdersScreen() {
               </View>
             )}
 
+            {/* Drag Down Menu for New Rescheduled Date */}
+            <DropdownSelect
+              label="New Preferred Date & Time"
+              required
+              value={newDateInput}
+              onSelect={setNewDateInput}
+              options={getBookingDateOptions().map((d) => ({
+                id: d.id,
+                label: d.label,
+                badge: d.badge,
+              }))}
+              placeholder="Select new date from drag down menu..."
+              icon="calendar-outline"
+              allowCustomInput
+              customInputPlaceholder="Type custom date & time (e.g. Next Tuesday 3:00 PM)..."
+            />
+
             {/* Quick Suggestion Chips */}
-            <Text style={styles.modalLabel}>Quick Suggestions</Text>
+            <Text style={styles.modalLabel}>Quick Suggestion Shortcuts</Text>
             <View style={styles.chipRow}>
               {PRESET_DATE_SUGGESTIONS.map((suggestion) => (
                 <TouchableOpacity
@@ -489,26 +524,6 @@ export default function CustomerOrdersScreen() {
               ))}
             </View>
 
-            {/* New Date Input */}
-            <Text style={styles.modalLabel}>
-              Preferred Date & Time <Text style={styles.requiredStar}>*</Text>
-            </Text>
-            <View style={styles.inputContainer}>
-              <Ionicons
-                name="calendar"
-                size={18}
-                color={Colors.textSecondary}
-                style={styles.inputIcon}
-              />
-              <TextInput
-                style={styles.textInput}
-                placeholder="e.g., Tomorrow, 4:00 PM or Oct 15, 2:00 PM"
-                placeholderTextColor={Colors.textMuted}
-                value={newDateInput}
-                onChangeText={setNewDateInput}
-                autoFocus
-              />
-            </View>
 
             {/* Optional Reason Input */}
             <Text style={styles.modalLabel}>Reason for Postponing (Optional)</Text>
@@ -939,4 +954,20 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#FFFFFF',
   },
+  verifiedPhoneTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: BorderRadius.xs,
+    marginLeft: 6,
+  },
+  verifiedPhoneTagText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#15803D',
+  },
 });
+

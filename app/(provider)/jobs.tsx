@@ -138,7 +138,14 @@ export default function ProviderJobsScreen() {
                   <Text style={styles.metaText}>
                     {job.customer_phone || '+92 300 1234567'}
                   </Text>
+                  {job.customer_phone_verified && (
+                    <View style={styles.verifiedPhoneTag}>
+                      <Ionicons name="shield-checkmark" size={10} color="#15803D" />
+                      <Text style={styles.verifiedPhoneTagText}>Verified</Text>
+                    </View>
+                  )}
                 </View>
+
 
                 <View style={styles.footerRow}>
                   <View>
@@ -300,4 +307,20 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#B45309',
   },
+  verifiedPhoneTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: BorderRadius.xs,
+    marginLeft: 6,
+  },
+  verifiedPhoneTagText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#15803D',
+  },
 });
+

@@ -22,11 +22,13 @@ export interface Profile {
   full_name: string;
   email: string;
   phone?: string | null;
+  is_phone_verified?: boolean;
   role: UserRole;
   avatar_url?: string | null;
   created_at?: string;
   updated_at?: string;
 }
+
 
 export interface ServiceProvider {
   id: string;
@@ -68,6 +70,7 @@ export interface JobOrder {
   customer_id: string;
   customer_name?: string;
   customer_phone?: string;
+  customer_phone_verified?: boolean;
   provider_id?: string | null;
   provider_name?: string;
   service_title: string;
@@ -89,6 +92,7 @@ export interface AuthContextType {
   session: any;
   isLoading: boolean;
   isMockMode: boolean;
+  isPhoneVerified: boolean;
   login: (email: string, password: string) => Promise<{ error: Error | null }>;
   signup: (params: {
     fullName: string;
@@ -99,8 +103,12 @@ export interface AuthContextType {
     trade?: string;
     experienceYears?: number;
     bio?: string;
+    isPhoneVerified?: boolean;
   }) => Promise<{ error: Error | null; needsEmailVerification?: boolean }>;
   logout: () => Promise<void>;
   refreshProfile: () => Promise<void>;
   toggleAvailability: () => Promise<void>;
+  setPhoneVerified: (phone: string) => Promise<void>;
+  updatePhoneNumber: (phone: string, isVerified?: boolean) => Promise<void>;
 }
+

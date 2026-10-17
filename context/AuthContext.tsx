@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { AuthContextType, Profile, ServiceProvider, UserRole } from '@/types';
+import { isPhoneVerifiedLocally, markPhoneAsVerified } from '@/lib/phoneVerification';
 
 const STORAGE_KEYS = {
   PROFILE: '@fixmate_profile',
@@ -45,6 +46,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [providerData, setProviderData] = useState<ServiceProvider | null>(null);
   const [role, setRole] = useState<UserRole | null>(null);
+  const [isPhoneVerified, setIsPhoneVerified] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const isMockMode = !isSupabaseConfigured;
 
@@ -77,11 +79,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setUser(JSON.parse(cachedSession));
             setProfile(parsedProfile);
             setRole(parsedProfile.role);
+            const verified = Boolean(parsedProfile.is_phone_verified) || (await isPhoneVerifiedLocally(parsedProfile.phone));
+            setIsPhoneVerified(verified);
             if (cachedProvider) {
               setProviderData(JSON.parse(cachedProvider));
             }
           }
         }
+
       } catch (err) {
         console.error('Failed to initialize auth state:', err);
       } finally {
@@ -138,10 +143,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .maybeSingle();
 
       if (prof) {
-        setProfile(prof as Profile);
+        const verified = Boolean((prof as any).is_phone_verified) || (await isPhoneVerifiedLocally(prof.phone));
+        const fullProf: Profile = { ...(prof as Profile), is_phone_verified: verified };
+        setProfile(fullProf);
+        setIsPhoneVerified(verified);
         setRole(prof.role as UserRole);
         await safeSetItem(STORAGE_KEYS.ROLE, prof.role);
-        await safeSetItem(STORAGE_KEYS.PROFILE, JSON.stringify(prof));
+        await safeSetItem(STORAGE_KEYS.PROFILE, JSON.stringify(fullProf));
+
 
         if (prof.role === 'provider') {
           const { data: prov } = await supabase
@@ -176,18 +185,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } else {
         // Fallback: create profile directly from auth user metadata if database trigger did not run
         const metaRole: UserRole = authUser.user_metadata?.role === 'provider' ? 'provider' : 'customer';
+        const verified = await isPhoneVerifiedLocally(authUser.user_metadata?.phone);
         const fallbackProfile: Profile = {
           id: userId,
           full_name: authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'FixMate User',
           email: authUser.email || '',
           phone: authUser.user_metadata?.phone || null,
+          is_phone_verified: verified,
           role: metaRole,
         };
 
         setProfile(fallbackProfile);
+        setIsPhoneVerified(verified);
         setRole(metaRole);
         await safeSetItem(STORAGE_KEYS.ROLE, metaRole);
         await safeSetItem(STORAGE_KEYS.PROFILE, JSON.stringify(fallbackProfile));
+
 
         // Insert into public.profiles
         try {
@@ -251,11 +264,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           },
         };
 
+        const isVerifiedPhone = await isPhoneVerifiedLocally('+92 300 1234567');
         const mockProfile: Profile = {
           id: mockUser.id,
           full_name: isProvider ? 'Tariq Mehmood' : 'Ahmed Khan',
           email: email.trim(),
           phone: '+92 300 1234567',
+          is_phone_verified: isVerifiedPhone,
           role: assignedRole,
         };
 
@@ -278,6 +293,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setSession({ user: mockUser });
         setProfile(mockProfile);
         setRole(assignedRole);
+        setIsPhoneVerified(isVerifiedPhone);
         setProviderData(mockProv);
 
         await safeSetItem(STORAGE_KEYS.MOCK_SESSION, JSON.stringify(mockUser));
@@ -304,6 +320,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     trade,
     experienceYears,
     bio,
+    isPhoneVerified: initialVerified = false,
   }: {
     fullName: string;
     email: string;
@@ -313,8 +330,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     trade?: string;
     experienceYears?: number;
     bio?: string;
+    isPhoneVerified?: boolean;
   }) => {
     try {
+      const verified = initialVerified || (await isPhoneVerifiedLocally(phone.trim()));
+      if (verified) {
+        await markPhoneAsVerified(phone.trim());
+      }
+      setIsPhoneVerified(verified);
+
       if (isSupabaseConfigured) {
         const { data, error } = await supabase.auth.signUp({
           email: email.trim(),
@@ -323,6 +347,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             data: {
               full_name: fullName.trim(),
               phone: phone.trim(),
+              is_phone_verified: verified,
               role: selectedRole,
               trade: selectedRole === 'provider' ? trade : undefined,
               experience_years: experienceYears ?? 2,
@@ -350,6 +375,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               full_name: fullName.trim(),
               email: email.trim(),
               phone: phone.trim(),
+              is_phone_verified: verified,
               role: selectedRole,
             });
 
@@ -383,6 +409,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           full_name: fullName.trim(),
           email: email.trim(),
           phone: phone.trim(),
+          is_phone_verified: verified,
           role: selectedRole,
         };
 
@@ -406,6 +433,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setSession({ user: mockUser });
         setProfile(mockProfile);
         setRole(selectedRole);
+        setIsPhoneVerified(verified);
         setProviderData(mockProv);
 
         await safeSetItem(STORAGE_KEYS.MOCK_SESSION, JSON.stringify(mockUser));
@@ -417,6 +445,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         return { error: null, needsEmailVerification: false };
       }
+
     } catch (err: any) {
       return { error: err };
     }
@@ -469,6 +498,53 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  // 7. Phone verification setters
+  const setPhoneVerified = async (targetPhone: string) => {
+    await markPhoneAsVerified(targetPhone);
+    setIsPhoneVerified(true);
+    if (profile) {
+      const updated: Profile = {
+        ...profile,
+        phone: targetPhone,
+        is_phone_verified: true,
+      };
+      setProfile(updated);
+      await safeSetItem(STORAGE_KEYS.PROFILE, JSON.stringify(updated));
+      if (isSupabaseConfigured && user?.id) {
+        try {
+          await supabase
+            .from('profiles')
+            .update({ phone: targetPhone, is_phone_verified: true })
+            .eq('id', user.id);
+        } catch {}
+      }
+    }
+  };
+
+  const updatePhoneNumber = async (targetPhone: string, isVerified = false) => {
+    if (isVerified) {
+      await markPhoneAsVerified(targetPhone);
+    }
+    setIsPhoneVerified(isVerified);
+    if (profile) {
+      const updated: Profile = {
+        ...profile,
+        phone: targetPhone,
+        is_phone_verified: isVerified,
+      };
+      setProfile(updated);
+      await safeSetItem(STORAGE_KEYS.PROFILE, JSON.stringify(updated));
+      if (isSupabaseConfigured && user?.id) {
+        try {
+          await supabase
+            .from('profiles')
+            .update({ phone: targetPhone, is_phone_verified: isVerified })
+            .eq('id', user.id);
+        } catch {}
+      }
+    }
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -479,15 +555,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         session,
         isLoading,
         isMockMode,
+        isPhoneVerified,
         login,
         signup,
         logout,
         refreshProfile,
         toggleAvailability,
+        setPhoneVerified,
+        updatePhoneNumber,
       }}
     >
       {children}
     </AuthContext.Provider>
+
   );
 }
 
