@@ -10,7 +10,6 @@ import {
   Platform,
   ActivityIndicator,
   Linking,
-  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, BorderRadius, Shadows } from '@/constants/Theme';
@@ -35,7 +34,7 @@ export function PhoneVerificationModal({
   onClose,
   onSuccess,
   title = 'Verify Phone Number',
-  description = 'Free phone verification via instant SMS OTP or WhatsApp to secure your bookings.',
+  description = 'An SMS OTP will be sent to your number via your registered SMS gateway.',
 }: PhoneVerificationModalProps) {
   const [phoneNumber, setPhoneNumber] = useState(initialPhone);
   const [step, setStep] = useState<'input' | 'otp' | 'success'>('input');
@@ -43,12 +42,7 @@ export function PhoneVerificationModal({
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
-
-  // Simulated in-app SMS toast
-  const [simulatedSMS, setSimulatedSMS] = useState<{
-    code: string;
-    message: string;
-  } | null>(null);
+  const [sentChannel, setSentChannel] = useState<'sms' | 'whatsapp'>('sms');
 
   // Resend countdown
   const [countdown, setCountdown] = useState(60);
@@ -62,7 +56,6 @@ export function PhoneVerificationModal({
       setOtpCode('');
       setErrorMsg('');
       setSuccessMsg('');
-      setSimulatedSMS(null);
       setStep('input');
     }
   }, [visible, initialPhone]);
@@ -84,7 +77,7 @@ export function PhoneVerificationModal({
     };
   }, [step, countdown]);
 
-  const handleSendCode = async (channel: 'sms' | 'whatsapp' | 'flash_call' = 'sms') => {
+  const handleSendCode = async (channel: 'sms' | 'whatsapp' = 'sms') => {
     setErrorMsg('');
     const validation = validatePakistaniPhone(phoneNumber);
     if (!validation.isValid) {
@@ -97,7 +90,7 @@ export function PhoneVerificationModal({
       const res = await sendFreePhoneOTP(phoneNumber, channel);
 
       setPhoneNumber(res.formattedPhone);
-      setSimulatedSMS({ code: res.code, message: res.message });
+      setSentChannel(channel);
       setStep('otp');
       setCountdown(60);
 
@@ -107,7 +100,7 @@ export function PhoneVerificationModal({
         });
       }
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Could not send verification code.');
+      setErrorMsg(err?.message || 'Could not send verification code. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -139,27 +132,6 @@ export function PhoneVerificationModal({
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleAutoFillCode = () => {
-    if (simulatedSMS?.code) {
-      setOtpCode(simulatedSMS.code);
-      setErrorMsg('');
-    }
-  };
-
-  const handleInstantFlashCallVerify = async () => {
-    setLoading(true);
-    setErrorMsg('');
-    setTimeout(async () => {
-      setLoading(false);
-      setStep('success');
-      setSuccessMsg('Phone verified via Free Flash Call simulation! 🎉');
-      setTimeout(() => {
-        onSuccess(phoneNumber);
-        onClose();
-      }, 1200);
-    }, 1200);
   };
 
   return (
@@ -226,10 +198,10 @@ export function PhoneVerificationModal({
               </View>
 
               <Text style={styles.freeNoticeText}>
-                ✨ 100% Free Verification — No charges or telecom carrier fees.
+                📱 Free SMS OTP — sent via your connected SMS gateway.
               </Text>
 
-              {/* Action Buttons */}
+              {/* Primary: SMS */}
               <TouchableOpacity
                 style={[styles.primaryBtn, loading && styles.btnDisabled]}
                 onPress={() => handleSendCode('sms')}
@@ -240,71 +212,45 @@ export function PhoneVerificationModal({
                 ) : (
                   <>
                     <Ionicons name="chatbubble-ellipses-outline" size={18} color="#FFFFFF" />
-                    <Text style={styles.primaryBtnText}>Send Free SMS Code</Text>
+                    <Text style={styles.primaryBtnText}>Send SMS Code</Text>
                   </>
                 )}
               </TouchableOpacity>
 
-              {/* Alternative Free Channels */}
+              {/* Alternative: WhatsApp */}
               <View style={styles.channelDivider}>
                 <View style={styles.dividerLine} />
-                <Text style={styles.dividerText}>OR FREE ALTERNATIVES</Text>
+                <Text style={styles.dividerText}>OR</Text>
                 <View style={styles.dividerLine} />
               </View>
 
-              <View style={styles.altButtonsRow}>
-                <TouchableOpacity
-                  style={styles.whatsappBtn}
-                  onPress={() => handleSendCode('whatsapp')}
-                  disabled={loading}
-                >
-                  <Ionicons name="logo-whatsapp" size={18} color="#15803D" />
-                  <Text style={styles.whatsappBtnText}>Verify via WhatsApp</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.flashCallBtn}
-                  onPress={handleInstantFlashCallVerify}
-                  disabled={loading}
-                >
-                  <Ionicons name="call-outline" size={18} color={Colors.primary} />
-                  <Text style={styles.flashCallBtnText}>Instant Flash Call</Text>
-                </TouchableOpacity>
-              </View>
+              <TouchableOpacity
+                style={[styles.whatsappBtn, loading && styles.btnDisabled]}
+                onPress={() => handleSendCode('whatsapp')}
+                disabled={loading}
+              >
+                <Ionicons name="logo-whatsapp" size={18} color="#15803D" />
+                <Text style={styles.whatsappBtnText}>Verify via WhatsApp</Text>
+              </TouchableOpacity>
             </View>
           )}
 
           {/* STEP 2: Enter OTP Code */}
           {step === 'otp' && (
             <View style={styles.bodyContent}>
-              {/* Simulated In-App SMS Toast */}
-              {simulatedSMS && (
-                <View style={styles.simulatedSmsToast}>
-                  <View style={styles.smsHeaderRow}>
-                    <View style={styles.smsHeaderLeft}>
-                      <Ionicons name="mail" size={14} color="#0284C7" />
-                      <Text style={styles.smsSender}>FixMate SMS (Free OTP)</Text>
-                    </View>
-                    <Text style={styles.smsNow}>Now</Text>
-                  </View>
-                  <Text style={styles.smsBody}>
-                    Your 6-digit verification code is{' '}
-                    <Text style={styles.smsHighlightCode}>
-                      {simulatedSMS.code}
-                    </Text>
-                    .
-                  </Text>
-                  <TouchableOpacity
-                    style={styles.autoFillBtn}
-                    onPress={handleAutoFillCode}
-                  >
-                    <Ionicons name="flash" size={13} color="#FFFFFF" />
-                    <Text style={styles.autoFillBtnText}>
-                      Auto-fill Code ({simulatedSMS.code})
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              )}
+              {/* Sent confirmation banner */}
+              <View style={styles.sentBanner}>
+                <Ionicons
+                  name={sentChannel === 'whatsapp' ? 'logo-whatsapp' : 'chatbubble-ellipses'}
+                  size={16}
+                  color={sentChannel === 'whatsapp' ? '#15803D' : Colors.primary}
+                />
+                <Text style={styles.sentBannerText}>
+                  {sentChannel === 'whatsapp'
+                    ? 'WhatsApp opened — enter the OTP code sent there'
+                    : `OTP sent to ${phoneNumber}`}
+                </Text>
+              </View>
 
               <Text style={styles.fieldLabel}>Enter 6-Digit Code</Text>
               <TextInput
@@ -312,7 +258,10 @@ export function PhoneVerificationModal({
                 placeholder="• • • • • •"
                 placeholderTextColor={Colors.textMuted}
                 value={otpCode}
-                onChangeText={setOtpCode}
+                onChangeText={(t) => {
+                  setOtpCode(t);
+                  setErrorMsg('');
+                }}
                 keyboardType="number-pad"
                 maxLength={6}
                 autoFocus
@@ -320,7 +269,11 @@ export function PhoneVerificationModal({
 
               <View style={styles.resendRow}>
                 <TouchableOpacity
-                  onPress={() => setStep('input')}
+                  onPress={() => {
+                    setStep('input');
+                    setOtpCode('');
+                    setErrorMsg('');
+                  }}
                   style={styles.editPhoneLink}
                 >
                   <Ionicons name="pencil" size={12} color={Colors.textSecondary} />
@@ -333,10 +286,10 @@ export function PhoneVerificationModal({
                   </Text>
                 ) : (
                   <TouchableOpacity
-                    onPress={() => handleSendCode('sms')}
+                    onPress={() => handleSendCode(sentChannel)}
                     disabled={loading}
                   >
-                    <Text style={styles.resendActiveText}>Resend Free OTP</Text>
+                    <Text style={styles.resendActiveText}>Resend OTP</Text>
                   </TouchableOpacity>
                 )}
               </View>
@@ -536,12 +489,7 @@ const styles = StyleSheet.create({
     color: Colors.textMuted,
     letterSpacing: 0.5,
   },
-  altButtonsRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
   whatsappBtn: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -553,82 +501,31 @@ const styles = StyleSheet.create({
     borderColor: '#BBF7D0',
   },
   whatsappBtnText: {
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '700',
     color: '#15803D',
   },
-  flashCallBtn: {
-    flex: 1,
+
+  // Sent confirmation banner
+  sentBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 10,
-    borderRadius: BorderRadius.md,
-    backgroundColor: Colors.background,
+    gap: 8,
+    backgroundColor: '#F0FDF4',
     borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  flashCallBtnText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: Colors.primary,
-  },
-
-  // OTP view styles
-  simulatedSmsToast: {
-    backgroundColor: '#E0F2FE',
-    borderWidth: 1,
-    borderColor: '#BAE6FD',
+    borderColor: '#BBF7D0',
     borderRadius: BorderRadius.md,
     padding: Spacing.sm,
     marginBottom: Spacing.md,
   },
-  smsHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 2,
-  },
-  smsHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  smsSender: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#0369A1',
-  },
-  smsNow: {
-    fontSize: 10,
-    color: '#0284C7',
-  },
-  smsBody: {
+  sentBannerText: {
     fontSize: 12,
-    color: '#0C4A6E',
-    marginTop: 2,
+    fontWeight: '600',
+    color: '#15803D',
+    flex: 1,
   },
-  smsHighlightCode: {
-    fontWeight: '800',
-    letterSpacing: 1,
-    color: Colors.primary,
-  },
-  autoFillBtn: {
-    backgroundColor: '#0284C7',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    paddingVertical: 5,
-    borderRadius: BorderRadius.xs,
-    marginTop: 6,
-  },
-  autoFillBtnText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '700',
-  },
+
+  // OTP input
   otpInput: {
     backgroundColor: Colors.background,
     borderWidth: 1.5,
