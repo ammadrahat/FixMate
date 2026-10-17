@@ -20,16 +20,22 @@ import { useAuth } from '@/context/AuthContext';
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { login, resetPassword } = useAuth();
+  const { login, requestPasswordReset, confirmPasswordReset } = useAuth();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
-  // Password reset modal states
+  // Password reset modal states & options
   const [resetModalVisible, setResetModalVisible] = useState(false);
-  const [resetEmail, setResetEmail] = useState('');
+  const [resetMethod, setResetMethod] = useState<'email' | 'phone'>('email');
+  const [resetStep, setResetStep] = useState<'request' | 'verify' | 'success'>('request');
+  const [resetIdentifier, setResetIdentifier] = useState('');
+  const [resetToken, setResetToken] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [mockOtpPreview, setMockOtpPreview] = useState('');
   const [resetLoading, setResetLoading] = useState(false);
   const [resetMessage, setResetMessage] = useState('');
   const [resetError, setResetError] = useState('');
@@ -82,27 +88,92 @@ export default function LoginScreen() {
     }
   };
 
-  const handleSendResetPassword = async () => {
-    if (!resetEmail.trim()) {
-      setResetError('Please enter your email address');
+  const openResetModal = () => {
+    setResetModalVisible(true);
+    setResetStep('request');
+    setResetMethod('email');
+    setResetIdentifier(email.trim());
+    setResetToken('');
+    setNewPassword('');
+    setConfirmNewPassword('');
+    setMockOtpPreview('');
+    setResetError('');
+    setResetMessage('');
+  };
+
+  const handleSendResetCode = async () => {
+    const cleanId = resetIdentifier.trim();
+    if (!cleanId) {
+      setResetError(
+        `Please enter your ${resetMethod === 'phone' ? 'phone number' : 'email address'}.`
+      );
       return;
     }
-    if (!/\S+@\S+\.\S+/.test(resetEmail.trim())) {
-      setResetError('Please enter a valid email address');
+    if (resetMethod === 'email' && !/\S+@\S+\.\S+/.test(cleanId)) {
+      setResetError('Please enter a valid email address.');
       return;
     }
+    if (resetMethod === 'phone' && cleanId.length < 10) {
+      setResetError('Please enter a valid Pakistani mobile number (e.g. +92 300 1234567).');
+      return;
+    }
+
     setResetLoading(true);
     setResetError('');
     setResetMessage('');
+
     try {
-      const { error, message } = await resetPassword(resetEmail.trim());
-      if (error) {
-        setResetError(error.message || 'Failed to send reset instructions.');
+      const res = await requestPasswordReset(cleanId, resetMethod);
+      if (res.error) {
+        setResetError(res.error.message || 'Failed to dispatch reset code.');
       } else {
-        setResetMessage(message || 'Password reset link sent to your email.');
+        setResetStep('verify');
+        setMockOtpPreview(res.mockOtp || '');
+        setResetMessage(
+          res.message || 'Verification code dispatched successfully. Please enter it below.'
+        );
       }
     } catch (err: any) {
       setResetError(err.message || 'An error occurred. Please try again.');
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
+  const handleConfirmReset = async () => {
+    const cleanId = resetIdentifier.trim();
+    const cleanToken = resetToken.trim();
+
+    if (!cleanToken) {
+      setResetError('Please enter the 6-digit verification code.');
+      return;
+    }
+    if (!newPassword) {
+      setResetError('Please enter your new password.');
+      return;
+    }
+    if (newPassword.length < 6) {
+      setResetError('Password must be at least 6 characters long.');
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setResetError('Passwords do not match.');
+      return;
+    }
+
+    setResetLoading(true);
+    setResetError('');
+
+    try {
+      const res = await confirmPasswordReset(cleanId, cleanToken, newPassword, resetMethod);
+      if (res.error) {
+        setResetError(res.error.message || 'Invalid or expired verification code.');
+      } else {
+        setResetStep('success');
+        setResetMessage(res.message || 'Password successfully updated!');
+      }
+    } catch (err: any) {
+      setResetError(err.message || 'Failed to update password.');
     } finally {
       setResetLoading(false);
     }
@@ -190,12 +261,7 @@ export default function LoginScreen() {
 
             <View style={styles.forgotPasswordRow}>
               <TouchableOpacity
-                onPress={() => {
-                  setResetEmail(email.trim());
-                  setResetError('');
-                  setResetMessage('');
-                  setResetModalVisible(true);
-                }}
+                onPress={openResetModal}
                 activeOpacity={0.7}
               >
                 <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
@@ -247,7 +313,7 @@ export default function LoginScreen() {
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* Password Reset Modal */}
+      {/* Password Reset Modal with In-App Reset Options */}
       <Modal
         visible={resetModalVisible}
         transparent
@@ -256,16 +322,32 @@ export default function LoginScreen() {
       >
         <View style={styles.modalOverlay}>
           <View style={[styles.modalCard, Shadows.card]}>
+            {/* Header */}
             <View style={styles.modalHeader}>
               <View style={styles.modalIconBox}>
-                <Ionicons name="key-outline" size={24} color={Colors.primary} />
+                <Ionicons
+                  name={resetStep === 'success' ? 'checkmark-circle' : 'key-outline'}
+                  size={26}
+                  color={resetStep === 'success' ? Colors.success : Colors.primary}
+                />
               </View>
-              <Text style={styles.modalTitle}>Reset Password</Text>
+              <Text style={styles.modalTitle}>
+                {resetStep === 'success'
+                  ? 'Password Reset Complete'
+                  : resetStep === 'verify'
+                  ? 'Create New Password'
+                  : 'Password Reset Options'}
+              </Text>
               <Text style={styles.modalSubtitle}>
-                Enter your account email to receive password reset instructions.
+                {resetStep === 'success'
+                  ? 'Your password has been updated securely. Sign in with your new password below.'
+                  : resetStep === 'verify'
+                  ? `Enter the 6-digit verification code sent to ${resetIdentifier} and your new password.`
+                  : 'Choose how you want to verify your identity to reset your password directly in FixMate.'}
               </Text>
             </View>
 
+            {/* Error Banner */}
             {Boolean(resetError) && (
               <View style={styles.modalErrorBox}>
                 <Ionicons name="alert-circle" size={16} color={Colors.danger} />
@@ -273,32 +355,199 @@ export default function LoginScreen() {
               </View>
             )}
 
-            {Boolean(resetMessage) ? (
+            {/* Success State */}
+            {resetStep === 'success' ? (
               <View style={styles.modalSuccessBox}>
-                <Ionicons name="checkmark-circle" size={32} color={Colors.success} />
+                <Ionicons name="checkmark-done-circle" size={48} color={Colors.success} />
                 <Text style={styles.modalSuccessText}>{resetMessage}</Text>
                 <Button
-                  title="Return to Login"
+                  title="Proceed to Login"
                   variant="primary"
                   size="md"
-                  onPress={() => setResetModalVisible(false)}
-                  style={{ marginTop: 14, width: '100%' }}
+                  onPress={() => {
+                    if (resetMethod === 'email') {
+                      setEmail(resetIdentifier);
+                    }
+                    setPassword(newPassword);
+                    setResetModalVisible(false);
+                  }}
+                  style={{ marginTop: 16, width: '100%' }}
                 />
               </View>
-            ) : (
+            ) : resetStep === 'verify' ? (
+              /* Step 2: Enter OTP Code & New Password */
               <View style={{ width: '100%' }}>
+                {Boolean(mockOtpPreview) && (
+                  <TouchableOpacity
+                    style={styles.demoOtpBanner}
+                    onPress={() => setResetToken(mockOtpPreview)}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="flash" size={14} color="#B45309" />
+                    <Text style={styles.demoOtpText}>
+                      Demo Code: <Text style={{ fontWeight: '800' }}>{mockOtpPreview}</Text> (Tap to auto-fill)
+                    </Text>
+                  </TouchableOpacity>
+                )}
+
                 <Input
-                  label="Registered Email"
-                  placeholder="name@example.com"
-                  value={resetEmail}
+                  label="6-Digit Verification Code"
+                  placeholder="e.g. 123456"
+                  value={resetToken}
                   onChangeText={(t) => {
-                    setResetEmail(t);
+                    setResetToken(t);
                     if (resetError) setResetError('');
                   }}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  icon="mail-outline"
+                  keyboardType="numeric"
+                  maxLength={6}
+                  icon="shield-checkmark-outline"
                 />
+
+                <Input
+                  label="New Password"
+                  placeholder="Minimum 6 characters"
+                  value={newPassword}
+                  onChangeText={(t) => {
+                    setNewPassword(t);
+                    if (resetError) setResetError('');
+                  }}
+                  isPassword
+                  icon="lock-closed-outline"
+                />
+
+                <Input
+                  label="Confirm New Password"
+                  placeholder="Repeat new password"
+                  value={confirmNewPassword}
+                  onChangeText={(t) => {
+                    setConfirmNewPassword(t);
+                    if (resetError) setResetError('');
+                  }}
+                  isPassword
+                  icon="lock-closed-outline"
+                />
+
+                <Button
+                  title="Reset Password Now"
+                  variant="primary"
+                  size="md"
+                  loading={resetLoading}
+                  onPress={handleConfirmReset}
+                  style={{ marginTop: 8, width: '100%' }}
+                />
+
+                <View style={styles.resetSubActionsRow}>
+                  <TouchableOpacity
+                    onPress={handleSendResetCode}
+                    disabled={resetLoading}
+                    style={styles.subActionLink}
+                  >
+                    <Ionicons name="refresh-outline" size={14} color={Colors.primary} />
+                    <Text style={styles.subActionText}>Resend Code</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => setResetStep('request')}
+                    style={styles.subActionLink}
+                  >
+                    <Ionicons name="arrow-back-outline" size={14} color={Colors.textSecondary} />
+                    <Text style={styles.subActionTextMuted}>Change Method</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              /* Step 1: Choose Reset Method & Request Code */
+              <View style={{ width: '100%' }}>
+                {/* Method selector pills */}
+                <View style={styles.resetMethodSelector}>
+                  <TouchableOpacity
+                    style={[
+                      styles.resetMethodTab,
+                      resetMethod === 'email' && styles.resetMethodTabActive,
+                    ]}
+                    onPress={() => {
+                      setResetMethod('email');
+                      setResetIdentifier(email.trim());
+                      setResetError('');
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons
+                      name="mail-outline"
+                      size={16}
+                      color={resetMethod === 'email' ? Colors.primary : Colors.textSecondary}
+                    />
+                    <Text
+                      style={[
+                        styles.resetMethodTabText,
+                        resetMethod === 'email' && styles.resetMethodTabTextActive,
+                      ]}
+                    >
+                      Email Code
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.resetMethodTab,
+                      resetMethod === 'phone' && styles.resetMethodTabActive,
+                    ]}
+                    onPress={() => {
+                      setResetMethod('phone');
+                      setResetIdentifier('+92 300 ');
+                      setResetError('');
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons
+                      name="chatbubble-ellipses-outline"
+                      size={16}
+                      color={resetMethod === 'phone' ? Colors.primary : Colors.textSecondary}
+                    />
+                    <Text
+                      style={[
+                        styles.resetMethodTabText,
+                        resetMethod === 'phone' && styles.resetMethodTabTextActive,
+                      ]}
+                    >
+                      Phone SMS (OTP)
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {resetMethod === 'email' ? (
+                  <Input
+                    label="Registered Email Address"
+                    placeholder="name@example.com"
+                    value={resetIdentifier}
+                    onChangeText={(t) => {
+                      setResetIdentifier(t);
+                      if (resetError) setResetError('');
+                    }}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    icon="mail-outline"
+                  />
+                ) : (
+                  <Input
+                    label="Registered Pakistani Mobile Number"
+                    placeholder="+92 300 1234567"
+                    value={resetIdentifier}
+                    onChangeText={(t) => {
+                      setResetIdentifier(t);
+                      if (resetError) setResetError('');
+                    }}
+                    keyboardType="phone-pad"
+                    icon="call-outline"
+                  />
+                )}
+
+                <View style={styles.resetDirectInfoBox}>
+                  <Ionicons name="shield-checkmark" size={16} color={Colors.primary} />
+                  <Text style={styles.resetDirectInfoText}>
+                    Direct in-app reset: receive a 6-digit code to update your password right here without needing any localhost or external links.
+                  </Text>
+                </View>
 
                 <View style={styles.modalBtnRow}>
                   <Button
@@ -309,14 +558,27 @@ export default function LoginScreen() {
                     style={{ flex: 1 }}
                   />
                   <Button
-                    title="Send Link"
+                    title="Send Reset Code"
                     variant="primary"
                     size="md"
                     loading={resetLoading}
-                    onPress={handleSendResetPassword}
-                    style={{ flex: 1 }}
+                    onPress={handleSendResetCode}
+                    style={{ flex: 1.5 }}
                   />
                 </View>
+
+                <TouchableOpacity
+                  style={styles.alreadyHaveCodeBtn}
+                  onPress={() => {
+                    setResetStep('verify');
+                    setResetError('');
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.alreadyHaveCodeText}>
+                    Already have a 6-digit verification code? <Text style={{ fontWeight: '700', color: Colors.primary }}>Enter Code</Text>
+                  </Text>
+                </TouchableOpacity>
               </View>
             )}
           </View>
@@ -521,5 +783,100 @@ const styles = StyleSheet.create({
     gap: 10,
     marginTop: Spacing.md,
     width: '100%',
+  },
+  resetMethodSelector: {
+    flexDirection: 'row',
+    backgroundColor: '#F1F5F9',
+    borderRadius: BorderRadius.md,
+    padding: 4,
+    marginBottom: Spacing.md,
+    gap: 6,
+  },
+  resetMethodTab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    borderRadius: BorderRadius.sm,
+    gap: 6,
+  },
+  resetMethodTabActive: {
+    backgroundColor: '#FFFFFF',
+    ...Shadows.card,
+  },
+  resetMethodTabText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+  },
+  resetMethodTabTextActive: {
+    color: Colors.primary,
+    fontWeight: '700',
+  },
+  resetDirectInfoBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#EFF6FF',
+    borderRadius: BorderRadius.md,
+    padding: Spacing.sm,
+    gap: 8,
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  resetDirectInfoText: {
+    fontSize: 12,
+    color: Colors.primary,
+    flex: 1,
+    lineHeight: 16,
+  },
+  alreadyHaveCodeBtn: {
+    marginTop: Spacing.md,
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  alreadyHaveCodeText: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+  },
+  demoOtpBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: BorderRadius.md,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 8,
+    gap: 6,
+    marginBottom: Spacing.sm,
+  },
+  demoOtpText: {
+    fontSize: 12,
+    color: '#92400E',
+  },
+  resetSubActionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: Spacing.md,
+    paddingHorizontal: 4,
+  },
+  subActionLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
+  },
+  subActionText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.primary,
+  },
+  subActionTextMuted: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: Colors.textSecondary,
   },
 });

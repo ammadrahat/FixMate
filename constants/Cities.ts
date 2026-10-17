@@ -48,4 +48,59 @@ export const PAKISTAN_CITIES: CityOption[] = [
   { id: 'glt', name: 'Gilgit', province: 'Gilgit-Baltistan' },
 ];
 
+export const NOT_IN_LIST_CITY: CityOption = {
+  id: 'not_in_list',
+  name: '➕ Not in the list? (Add custom city)',
+  province: 'Custom City',
+};
+
 export const CITY_NAMES = PAKISTAN_CITIES.map((c) => c.name);
+
+// Storage key for user-added custom cities
+export const CUSTOM_CITIES_STORAGE_KEY = '@fixmate_custom_cities';
+
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+export async function getStoredCustomCities(): Promise<string[]> {
+  try {
+    const raw = await AsyncStorage.getItem(CUSTOM_CITIES_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function saveCustomCityToStorage(cityName: string): Promise<string[]> {
+  const clean = cityName.trim();
+  if (!clean || clean.length < 2) return [];
+  try {
+    const current = await getStoredCustomCities();
+    const exists = current.some((c) => c.toLowerCase() === clean.toLowerCase()) ||
+                   PAKISTAN_CITIES.some((c) => c.name.toLowerCase() === clean.toLowerCase());
+    if (!exists) {
+      const updated = [clean, ...current];
+      await AsyncStorage.setItem(CUSTOM_CITIES_STORAGE_KEY, JSON.stringify(updated));
+      return updated;
+    }
+    return current;
+  } catch {
+    return [];
+  }
+}
+
+export function getCityDropdownOptions(customCities: string[] = []): CityOption[] {
+  const customList: CityOption[] = customCities.map((cityName, idx) => ({
+    id: `custom-${idx}-${cityName.toLowerCase().replace(/\s+/g, '-')}`,
+    name: cityName,
+    province: 'Custom Added',
+    isPopular: false,
+  }));
+
+  return [
+    ...customList,
+    ...PAKISTAN_CITIES,
+    NOT_IN_LIST_CITY,
+  ];
+}

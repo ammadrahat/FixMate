@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -19,13 +19,30 @@ import { Header } from '@/components/Header';
 import { Button } from '@/components/Button';
 import { DropdownSelect } from '@/components/DropdownSelect';
 import { PhoneVerificationModal } from '@/components/PhoneVerificationModal';
-import { PAKISTAN_CITIES } from '@/constants/Cities';
+import {
+  PAKISTAN_CITIES,
+  getStoredCustomCities,
+  saveCustomCityToStorage,
+  getCityDropdownOptions,
+} from '@/constants/Cities';
 import { useAuth } from '@/context/AuthContext';
 
 export default function CustomerProfileScreen() {
   const router = useRouter();
   const { profile, logout, isMockMode, isPhoneVerified, setPhoneVerified, updateAddress } = useAuth();
   const [phoneModalVisible, setPhoneModalVisible] = useState(false);
+
+  // Custom cities state
+  const [customCities, setCustomCities] = useState<string[]>([]);
+
+  useEffect(() => {
+    getStoredCustomCities().then(setCustomCities);
+  }, []);
+
+  const handleAddCustomCity = async (newCity: string) => {
+    const updated = await saveCustomCityToStorage(newCity);
+    setCustomCities(updated);
+  };
 
   // Address edit state
   const [addressModalVisible, setAddressModalVisible] = useState(false);
@@ -235,7 +252,7 @@ export default function CustomerProfileScreen() {
         visible={phoneModalVisible}
         initialPhone={profile?.phone || '+92 300 1234567'}
         onClose={() => setPhoneModalVisible(false)}
-        onSuccess={(verifiedPhone) => {
+        onSuccess={(verifiedPhone: string) => {
           setPhoneVerified(verifiedPhone);
           Alert.alert(
             'Phone Verified! 🎉',
@@ -282,12 +299,19 @@ export default function CustomerProfileScreen() {
                 value={editCity}
                 onSelect={(c) => setEditCity(c)}
                 placeholder="Select City"
-                options={PAKISTAN_CITIES.map((c) => ({
+                options={getCityDropdownOptions(customCities).map((c) => ({
                   id: c.id,
                   label: c.name,
                   sublabel: c.province,
                   badge: c.isPopular ? 'Popular' : undefined,
                 }))}
+                onAddCustomOption={handleAddCustomCity}
+                searchable
+                searchPlaceholder="Search city (e.g. Lahore, Karachi, Islamabad...)"
+                allowCustomInput
+                customInputPlaceholder="Type custom city name (e.g. Mianwali, Gujrat...)"
+                notInListLabel="➕ Not in the list? (Add custom city)"
+                helperText="FixMate services are available in all major & custom cities."
               />
             </View>
 

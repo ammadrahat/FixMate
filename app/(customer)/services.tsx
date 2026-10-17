@@ -19,7 +19,12 @@ import { Colors, Spacing, BorderRadius, Shadows } from '@/constants/Theme';
 import { Header } from '@/components/Header';
 import { EmptyState } from '@/components/EmptyState';
 import { SERVICE_CATEGORIES } from '@/constants/Categories';
-import { PAKISTAN_CITIES } from '@/constants/Cities';
+import {
+  PAKISTAN_CITIES,
+  getStoredCustomCities,
+  saveCustomCityToStorage,
+  getCityDropdownOptions,
+} from '@/constants/Cities';
 import { getBookingDateOptions } from '@/constants/BookingDates';
 import { DropdownSelect } from '@/components/DropdownSelect';
 import { PhoneVerificationModal } from '@/components/PhoneVerificationModal';
@@ -214,6 +219,16 @@ export default function CustomerServicesScreen() {
   const [phoneModalVisible, setPhoneModalVisible] = useState<boolean>(false);
   const [notes, setNotes] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [customCities, setCustomCities] = useState<string[]>([]);
+
+  useEffect(() => {
+    getStoredCustomCities().then(setCustomCities);
+  }, []);
+
+  const handleAddCustomCity = async (newCity: string) => {
+    const updated = await saveCustomCityToStorage(newCity);
+    setCustomCities(updated);
+  };
 
   const dateOptions = getBookingDateOptions();
 
@@ -606,19 +621,21 @@ export default function CustomerServicesScreen() {
                   required
                   value={city}
                   onSelect={setCity}
-                  options={PAKISTAN_CITIES.map((c) => ({
+                  options={getCityDropdownOptions(customCities).map((c) => ({
                     id: c.id,
                     label: c.name,
                     sublabel: c.province,
                     badge: c.isPopular ? 'Popular' : undefined,
                   }))}
+                  onAddCustomOption={handleAddCustomCity}
                   placeholder="Select city from menu..."
                   icon="location-outline"
                   searchable
                   searchPlaceholder="Search city (e.g. Lahore, Karachi, Islamabad...)"
                   allowCustomInput
-                  customInputPlaceholder="Type custom city name..."
-                  helperText="Technicians are active across all major cities of Pakistan."
+                  customInputPlaceholder="Type custom city name (e.g. Mianwali, Gujrat...)"
+                  notInListLabel="➕ Not in the list? (Add custom city)"
+                  helperText="Technicians are active across all major & custom added cities of Pakistan."
                 />
 
                 {/* Field: Preferred Date & Time (Drag Down Menu) */}

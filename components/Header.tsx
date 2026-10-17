@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -9,6 +9,7 @@ import {
   Platform,
 } from 'react-native';
 import { useRouter, usePathname } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, BorderRadius, Shadows } from '@/constants/Theme';
 import { useAuth } from '@/context/AuthContext';
@@ -39,50 +40,101 @@ export function Header({
 }: HeaderProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const { profile, role, isMockMode, isRoot } = useAuth();
+  const { profile, providerData, role, isMockMode, isRoot, isPhoneVerified } = useAuth();
   const { orders } = useSyncedOrders();
+
+  const currentUserId = profile?.id || 'guest';
+  const currentUserName = profile?.full_name || '';
+  const currentRole = role || profile?.role || 'customer';
+  const userCity = profile?.city || 'Lahore';
+  const hasAddress = Boolean(profile?.address?.trim());
+
+  const NOTIF_READ_KEY = `@fixmate_notifs_read_${currentUserId}`;
+  const NOTIF_CLEARED_KEY = `@fixmate_notifs_cleared_${currentUserId}`;
 
   const [modalVisible, setModalVisible] = useState(false);
   const [readIds, setReadIds] = useState<Set<string>>(new Set());
-  const [clearedAll, setClearedAll] = useState(false);
+  const [clearedIds, setClearedIds] = useState<Set<string>>(new Set());
 
-  // Generate real notifications based on user role and synced orders
-  const notifications = useMemo<NotificationItem[]>(() => {
-    if (clearedAll) return [];
+  // Load per-user read and cleared notifications
+  useEffect(() => {
+    let isMounted = true;
+    (async () => {
+      try {
+        const [rawRead, rawCleared] = await Promise.all([
+          AsyncStorage.getItem(NOTIF_READ_KEY),
+          AsyncStorage.getItem(NOTIF_CLEARED_KEY),
+        ]);
+        if (!isMounted) return;
+        if (rawRead) {
+          const arr = JSON.parse(rawRead);
+          if (Array.isArray(arr)) setReadIds(new Set(arr));
+        } else {
+          setReadIds(new Set());
+        }
+        if (rawCleared) {
+          const arr = JSON.parse(rawCleared);
+          if (Array.isArray(arr)) setClearedIds(new Set(arr));
+        } else {
+          setClearedIds(new Set());
+        }
+      } catch (err) {
+        console.warn('Could not load notification state:', err);
+      }
+    })();
+    return () => {
+      isMounted = false;
+    };
+  }, [currentUserId]);
 
+  // Generate personalized notifications strictly adjusted to logged in user
+  const allNotifications = useMemo<NotificationItem[]>(() => {
     const list: NotificationItem[] = [];
 
-    if (role === 'admin') {
-      list.push({
-        id: 'admin-welcome',
-        title: '⚡ Root Admin Active',
-        message: 'Superuser mode: You can delete any service ad directly from catalog or services tab.',
-        time: 'Active',
-        icon: 'shield-checkmark',
-        iconColor: '#7E22CE',
-        route: '/(provider)/my-services',
-      });
-    }
-
-    // Role-specific order notifications
+    // 1. Role & User-specific Order Notifications
     if (orders && orders.length > 0) {
-      orders.slice(0, 5).forEach((order) => {
-        if (role === 'provider' || role === 'admin') {
-          if (order.status === 'pending') {
+      if (currentRole === 'admin' || isRoot) {
+        // Admin: Superuser overview
+        const pendingOrders = orders.filter((o) => o.status === 'pending');
+        const activeJobs = orders.filter((o) => o.status === 'in_progress');
+
+        if (pendingOrders.length > 0) {
+          list.push({
+            id: `admin-lead-summary-${pendingOrders.length}`,
+            title: `📋 ${pendingOrders.length} New Job Leads Across Pakistan`,
+            message: `Latest: "${pendingOrders[0].service_title}" in ${pendingOrders[0].city} (Rs. ${pendingOrders[0].amount.toLocaleString()})`,
+            time: 'Pipeline',
+            icon: 'file-tray-full-outline',
+            iconColor: Colors.accent,
+            route: '/(provider)/requests',
+          });
+        }
+        if (activeJobs.length > 0) {
+          list.push({
+            id: `admin-active-summary-${activeJobs.length}`,
+            title: `⚡ ${activeJobs.length} Jobs In Progress`,
+            message: `Latest: "${activeJobs[0].service_title}" by ${activeJobs[0].provider_name || 'Technician'}`,
+            time: 'Active',
+            icon: 'construct-outline',
+            iconColor: Colors.primary,
+            route: '/(provider)/jobs',
+          });
+        }
+      } else if (currentRole === 'provider') {
+        // Provider: ONLY jobs assigned to THIS provider
+        const myAssignedJobs = orders.filter(
+          (o) =>
+            o.provider_id === currentUserId ||
+            (currentUserId === 'mock-prov-1' && (o.provider_id === 'prov-1' || (!o.provider_id && o.status !== 'pending'))) ||
+            (o.provider_name && currentUserName && o.provider_name.toLowerCase().includes(currentUserName.toLowerCase()))
+        );
+
+        myAssignedJobs.forEach((order) => {
+          if (order.status === 'in_progress' || order.status === 'accepted') {
             list.push({
-              id: `notif-order-pending-${order.id}`,
-              title: 'New Job Request Available',
-              message: `${order.service_title} in ${order.city || 'your area'} — Rs. ${order.amount.toLocaleString()}`,
-              time: order.scheduled_date || 'Upcoming',
-              icon: 'flash-outline',
-              iconColor: Colors.accent,
-              route: '/(provider)/requests',
-            });
-          } else if (order.status === 'in_progress') {
-            list.push({
-              id: `notif-order-prog-${order.id}`,
-              title: 'Active Job Scheduled',
-              message: `${order.service_title} for ${order.customer_name || 'Customer'}`,
+              id: `notif-prov-active-${order.id}`,
+              title: `Active Job Scheduled`,
+              message: `${order.service_title} for ${order.customer_name || 'Customer'} at ${order.address || order.city}`,
               time: order.scheduled_date || 'Today',
               icon: 'time-outline',
               iconColor: Colors.primary,
@@ -90,32 +142,68 @@ export function Header({
             });
           } else if (order.status === 'completed') {
             list.push({
-              id: `notif-order-done-${order.id}`,
-              title: 'Job Completed',
-              message: `${order.service_title} has been completed successfully.`,
+              id: `notif-prov-done-${order.id}`,
+              title: `Job Completed Successfully`,
+              message: `You completed "${order.service_title}" for ${order.customer_name || 'Customer'}.`,
               time: 'Completed',
               icon: 'checkmark-circle-outline',
               iconColor: Colors.success,
               route: '/(provider)/jobs',
             });
           }
-        } else {
-          // Customer perspective
+        });
+
+        // Provider: Trade-matching new leads in their city/trade
+        const providerTrade = providerData?.trade?.toLowerCase();
+        const relevantLeads = orders.filter((o) => {
+          if (o.status !== 'pending') return false;
+          if (o.provider_id && o.provider_id !== currentUserId) return false;
+          if (providerTrade && !providerTrade.includes('all')) {
+            const matchesTrade =
+              o.category?.toLowerCase().includes(providerTrade) ||
+              providerTrade.includes(o.category?.toLowerCase() || '') ||
+              o.service_title?.toLowerCase().includes(providerTrade);
+            return matchesTrade;
+          }
+          return true;
+        });
+
+        relevantLeads.slice(0, 3).forEach((lead) => {
+          list.push({
+            id: `notif-lead-${lead.id}`,
+            title: `New ${lead.category || 'Trade'} Lead in ${lead.city || userCity}`,
+            message: `${lead.service_title} — Rs. ${lead.amount.toLocaleString()} scheduled for ${lead.scheduled_date || 'Upcoming'}`,
+            time: 'Available Lead',
+            icon: 'flash-outline',
+            iconColor: Colors.accent,
+            route: '/(provider)/requests',
+          });
+        });
+      } else {
+        // Customer: ONLY orders created by THIS customer!
+        const myCustomerOrders = orders.filter((o) => {
+          if (o.customer_id === currentUserId) return true;
+          if (currentUserId === 'mock-cust-1' && o.customer_id === 'cust-1') return true;
+          if (currentUserName && o.customer_name && o.customer_name.toLowerCase() === currentUserName.toLowerCase()) return true;
+          return false;
+        });
+
+        myCustomerOrders.forEach((order) => {
           if (order.status === 'pending') {
             list.push({
               id: `notif-cust-pending-${order.id}`,
-              title: 'Booking Placed',
-              message: `Your booking for ${order.service_title} is being assigned to a verified technician.`,
+              title: `Booking Received — Matching Pro`,
+              message: `Your booking for "${order.service_title}" in ${order.city} is confirmed. A verified technician is being assigned.`,
               time: order.scheduled_date || 'Pending',
               icon: 'receipt-outline',
               iconColor: Colors.accent,
               route: '/(customer)/orders',
             });
-          } else if (order.status === 'in_progress') {
+          } else if (order.status === 'in_progress' || order.status === 'accepted') {
             list.push({
               id: `notif-cust-prog-${order.id}`,
-              title: 'Technician Assigned',
-              message: `${order.provider_name || 'FixMate Pro'} is working on your ${order.service_title}.`,
+              title: `Technician Assigned & Working`,
+              message: `${order.provider_name || 'FixMate Pro'} has been assigned to your "${order.service_title}".`,
               time: order.scheduled_date || 'In Progress',
               icon: 'construct-outline',
               iconColor: Colors.primary,
@@ -124,30 +212,123 @@ export function Header({
           } else if (order.status === 'completed') {
             list.push({
               id: `notif-cust-done-${order.id}`,
-              title: 'Service Completed',
-              message: `Your service order for ${order.service_title} has been completed.`,
+              title: `Service Completed Successfully 🎉`,
+              message: `Your service order for "${order.service_title}" has been completed.`,
               time: 'Completed',
               icon: 'checkmark-circle-outline',
               iconColor: Colors.success,
               route: '/(customer)/orders',
             });
+          } else if (order.status === 'cancelled') {
+            list.push({
+              id: `notif-cust-cancel-${order.id}`,
+              title: `Booking Cancelled`,
+              message: `Your booking for "${order.service_title}" was cancelled.`,
+              time: 'Cancelled',
+              icon: 'close-circle-outline',
+              iconColor: Colors.danger,
+              route: '/(customer)/orders',
+            });
           }
-        }
+        });
+      }
+    }
+
+    // 2. Personalized Account, Security & Profile Notifications
+    if (isRoot || currentRole === 'admin') {
+      list.push({
+        id: 'admin-welcome-status',
+        title: '⚡ Root Admin Active',
+        message: 'Superuser mode: You can manage and delete any service ad directly from catalog or services tab.',
+        time: 'Superuser',
+        icon: 'shield-checkmark',
+        iconColor: '#7E22CE',
+        route: '/(provider)/my-services',
       });
     }
 
-    // Default welcome notification
-    list.push({
-      id: 'welcome-notif',
-      title: 'Welcome to FixMate',
-      message: 'Explore verified plumbers, electricians, and home services with instant booking.',
-      time: 'Notice',
-      icon: 'sparkles-outline',
-      iconColor: Colors.primary,
-    });
+    // Phone verification required alert
+    if (!isPhoneVerified) {
+      list.push({
+        id: `phone-verify-alert-${currentUserId}`,
+        title: '📱 Phone Verification Required',
+        message:
+          currentRole === 'provider'
+            ? 'Verify your trade business phone number with instant OTP to receive customer call notifications and job dispatch alerts.'
+            : 'Verify your phone number with free instant OTP to receive technician updates and dispatch tracking.',
+        time: 'Action Required',
+        icon: 'shield-outline',
+        iconColor: Colors.warning,
+        route: currentRole === 'provider' ? '/(provider)/profile' : '/(customer)/profile',
+      });
+    }
+
+    // Address missing reminder for customer
+    if (currentRole === 'customer' && !hasAddress) {
+      list.push({
+        id: `address-missing-alert-${currentUserId}`,
+        title: '📍 Set Your Home/Office Address',
+        message: `Add your delivery address in ${userCity} to enjoy 1-tap instant booking without retyping your location.`,
+        time: 'Profile Tip',
+        icon: 'location-outline',
+        iconColor: Colors.primary,
+        route: '/(customer)/profile',
+      });
+    }
+
+    // Provider offline warning
+    if (currentRole === 'provider' && providerData && !providerData.is_available) {
+      list.push({
+        id: `provider-offline-alert-${currentUserId}`,
+        title: '🟡 Status: Currently Offline',
+        message: 'You are currently marked offline. Toggle status to "Available" on your Dashboard to receive incoming job requests.',
+        time: 'Status Notice',
+        icon: 'pause-circle-outline',
+        iconColor: Colors.warning,
+        route: '/(provider)',
+      });
+    }
+
+    // Personalized greeting
+    if (currentRole === 'customer') {
+      list.push({
+        id: `welcome-cust-${currentUserId}`,
+        title: `👋 Welcome, ${currentUserName || 'FixMate Customer'}!`,
+        message: `Need home repairs or electrical work in ${userCity}? Verified technicians are ready for booking.`,
+        time: 'Welcome',
+        icon: 'sparkles-outline',
+        iconColor: Colors.primary,
+        route: '/(customer)/services',
+      });
+    } else if (currentRole === 'provider') {
+      list.push({
+        id: `welcome-prov-${currentUserId}`,
+        title: `🛠️ Pro Hub: ${currentUserName || 'FixMate Pro'}`,
+        message: `Trade: ${providerData?.trade || 'Skilled Professional'} • Rating: ${providerData?.rating || 5.0} ⭐ • Completed: ${providerData?.completed_jobs || 0} jobs.`,
+        time: 'Pro Status',
+        icon: 'ribbon-outline',
+        iconColor: Colors.accent,
+        route: '/(provider)',
+      });
+    }
 
     return list;
-  }, [orders, role, clearedAll]);
+  }, [
+    orders,
+    currentRole,
+    isRoot,
+    currentUserId,
+    currentUserName,
+    userCity,
+    hasAddress,
+    isPhoneVerified,
+    providerData,
+  ]);
+
+  // Filter out cleared notifications for this user
+  const notifications = useMemo(() => {
+    return allNotifications.filter((n) => !clearedIds.has(n.id));
+  }, [allNotifications, clearedIds]);
 
   const unreadCount = notifications.filter((n) => !readIds.has(n.id)).length;
 
@@ -159,17 +340,32 @@ export function Header({
     }
   };
 
-  const markAllRead = () => {
-    const all = new Set(notifications.map((n) => n.id));
+  const markAllRead = async () => {
+    const all = new Set([...readIds, ...notifications.map((n) => n.id)]);
     setReadIds(all);
+    try {
+      await AsyncStorage.setItem(NOTIF_READ_KEY, JSON.stringify(Array.from(all)));
+    } catch {}
   };
 
-  const handleNotificationPress = (item: NotificationItem) => {
-    setReadIds((prev) => new Set([...prev, item.id]));
+  const handleNotificationPress = async (item: NotificationItem) => {
+    const updated = new Set([...readIds, item.id]);
+    setReadIds(updated);
+    try {
+      await AsyncStorage.setItem(NOTIF_READ_KEY, JSON.stringify(Array.from(updated)));
+    } catch {}
     setModalVisible(false);
     if (item.route) {
       router.push(item.route as any);
     }
+  };
+
+  const handleClearAll = async () => {
+    const updated = new Set([...clearedIds, ...notifications.map((n) => n.id)]);
+    setClearedIds(updated);
+    try {
+      await AsyncStorage.setItem(NOTIF_CLEARED_KEY, JSON.stringify(Array.from(updated)));
+    } catch {}
   };
 
   const isCustomerPath = pathname?.includes('(customer)');
@@ -357,9 +553,7 @@ export function Header({
               <View style={styles.modalFooter}>
                 <TouchableOpacity
                   style={styles.clearAllBtn}
-                  onPress={() => {
-                    setClearedAll(true);
-                  }}
+                  onPress={handleClearAll}
                 >
                   <Ionicons name="trash-outline" size={16} color={Colors.danger} />
                   <Text style={styles.clearAllText}>Clear All Notifications</Text>

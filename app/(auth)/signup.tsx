@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -16,6 +16,13 @@ import { Colors, Spacing, BorderRadius, Shadows } from '@/constants/Theme';
 import { PREDEFINED_TRADES } from '@/constants/Categories';
 import { Input } from '@/components/Input';
 import { Button } from '@/components/Button';
+import { DropdownSelect } from '@/components/DropdownSelect';
+import {
+  PAKISTAN_CITIES,
+  getStoredCustomCities,
+  saveCustomCityToStorage,
+  getCityDropdownOptions,
+} from '@/constants/Cities';
 import { PhoneVerificationModal } from '@/components/PhoneVerificationModal';
 import { validatePakistaniPhone } from '@/lib/phoneVerification';
 import { useAuth } from '@/context/AuthContext';
@@ -30,10 +37,21 @@ export default function SignupScreen() {
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
+  const [city, setCity] = useState('Lahore');
+  const [customCities, setCustomCities] = useState<string[]>([]);
   const [isPhoneVerified, setIsPhoneVerified] = useState(false);
   const [phoneModalVisible, setPhoneModalVisible] = useState(false);
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+
+  useEffect(() => {
+    getStoredCustomCities().then(setCustomCities);
+  }, []);
+
+  const handleAddCustomCity = async (newCity: string) => {
+    const updated = await saveCustomCityToStorage(newCity);
+    setCustomCities(updated);
+  };
 
   // Provider specific fields
   const [trade, setTrade] = useState('Plumbing');
@@ -102,6 +120,7 @@ export default function SignupScreen() {
         fullName: fullName.trim(),
         email: email.trim(),
         phone: phone.trim(),
+        city: city.trim(),
         password,
         role,
         trade: role === 'provider' ? trade : undefined,
@@ -290,6 +309,28 @@ export default function SignupScreen() {
             </View>
           </View>
 
+          {/* City Selection (Drag Down Menu with Custom Add) */}
+          <DropdownSelect
+            label="City / Location"
+            required
+            value={city}
+            onSelect={setCity}
+            options={getCityDropdownOptions(customCities).map((c) => ({
+              id: c.id,
+              label: c.name,
+              sublabel: c.province,
+              badge: c.isPopular ? 'Popular' : undefined,
+            }))}
+            onAddCustomOption={handleAddCustomCity}
+            placeholder="Select your city..."
+            icon="location-outline"
+            searchable
+            searchPlaceholder="Search city (e.g. Lahore, Karachi, Islamabad...)"
+            allowCustomInput
+            customInputPlaceholder="Type custom city name (e.g. Mianwali, Gujrat...)"
+            notInListLabel="➕ Not in the list? (Add custom city)"
+            helperText="Technicians and jobs are matched based on your chosen city."
+          />
 
           <Input
             label="Password"

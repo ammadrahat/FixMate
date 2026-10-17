@@ -104,6 +104,7 @@ export interface AuthContextType {
     phone: string;
     password: string;
     role: UserRole;
+    city?: string;
     trade?: string;
     experienceYears?: number;
     bio?: string;
@@ -116,5 +117,15 @@ export interface AuthContextType {
   updatePhoneNumber: (phone: string, isVerified?: boolean) => Promise<void>;
   updateAddress: (address: string, city: string) => Promise<void>;
   resetPassword: (email: string) => Promise<{ error: Error | null; message?: string }>;
+  requestPasswordReset: (
+    identifier: string,
+    method?: 'email' | 'phone'
+  ) => Promise<{ error: Error | null; message?: string; mockOtp?: string }>;
+  confirmPasswordReset: (
+    identifier: string,
+    token: string,
+    newPassword: string,
+    method?: 'email' | 'phone'
+  ) => Promise<{ error: Error | null; message?: string }>;
 }
 
