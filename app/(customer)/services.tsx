@@ -194,9 +194,9 @@ const ALL_SERVICES: ServiceDetail[] = [
 
 export default function CustomerServicesScreen() {
   const params = useLocalSearchParams<{ category?: string }>();
-  const { user, profile, isPhoneVerified, setPhoneVerified } = useAuth();
+  const { user, profile, isPhoneVerified, setPhoneVerified, isRoot } = useAuth();
   const { createOrder } = useSyncedOrders();
-  const { allServices } = useSyncedServices();
+  const { allServices, deleteService } = useSyncedServices();
 
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -205,8 +205,8 @@ export default function CustomerServicesScreen() {
   // Modal State
   const [modalVisible, setModalVisible] = useState<boolean>(false);
   const [selectedService, setSelectedService] = useState<ServiceDetail | null>(null);
-  const [address, setAddress] = useState<string>('');
-  const [city, setCity] = useState<string>('Lahore');
+  const [address, setAddress] = useState<string>(profile?.address || '');
+  const [city, setCity] = useState<string>(profile?.city || 'Lahore');
   const [preferredDateTime, setPreferredDateTime] = useState<string>(
     'Today - Emergency / ASAP (Within 45-60 Mins)'
   );
@@ -224,6 +224,38 @@ export default function CustomerServicesScreen() {
   }, [params?.category]);
 
   const categories = ['All', ...SERVICE_CATEGORIES.map((c) => c.name)];
+
+  const handleRootDelete = (service: ServiceDetail) => {
+    Alert.alert(
+      '⚡ Root Superuser Delete',
+      `Are you sure you want to delete "${service.title}"? As Root Administrator, this will permanently remove the ad from FixMate.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete as Root',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteService(service.id, 'root');
+              Alert.alert('Deleted', 'Service ad has been permanently removed.');
+            } catch (e: any) {
+              Alert.alert('Error', e?.message || 'Failed to delete service.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleOpenBookingModal = (service: ServiceDetail) => {
+    setSelectedService(service);
+    setAddress(profile?.address || '');
+    setCity(profile?.city || 'Lahore');
+    setPreferredDateTime('Today - Emergency / ASAP (Within 45-60 Mins)');
+    setCustomerPhone(profile?.phone || '');
+    setNotes('');
+    setModalVisible(true);
+  };
 
   // Live provider marketplace services combined with default catalog
   const liveProviderAds: ServiceDetail[] = (allServices || [])
@@ -254,15 +286,6 @@ export default function CustomerServicesScreen() {
     return matchesCategory && matchesQuery;
   });
 
-  const handleOpenBookingModal = (service: ServiceDetail) => {
-    setSelectedService(service);
-    setAddress('');
-    setCity('Lahore');
-    setPreferredDateTime('Today - Emergency / ASAP (Within 45-60 Mins)');
-    setCustomerPhone(profile?.phone || '');
-    setNotes('');
-    setModalVisible(true);
-  };
 
   const handleCloseModal = () => {
     if (isSubmitting) return;
@@ -448,36 +471,48 @@ export default function CustomerServicesScreen() {
                       <Text style={styles.priceLabel}>Starting from</Text>
                       <Text style={styles.priceValue}>{service.price}</Text>
                     </View>
-                    <TouchableOpacity
-                      style={[
-                        styles.bookButton,
-                        isBooked && styles.bookedButton,
-                      ]}
-                      onPress={() => {
-                        if (isBooked) {
-                          Alert.alert(
-                            'Already Booked',
-                            `You have already placed a booking for "${service.title}". You can view its progress in the My Orders tab.`,
-                            [
-                              { text: 'Book Another', onPress: () => handleOpenBookingModal(service) },
-                              { text: 'OK', style: 'cancel' },
-                            ]
-                          );
-                        } else {
-                          handleOpenBookingModal(service);
-                        }
-                      }}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={styles.bookButtonText}>
-                        {isBooked ? '✓ Booked' : 'Book Now'}
-                      </Text>
-                      <Ionicons
-                        name={isBooked ? 'checkmark-circle' : 'calendar-outline'}
-                        size={15}
-                        color="#FFFFFF"
-                      />
-                    </TouchableOpacity>
+                    <View style={styles.footerActionsRow}>
+                      {isRoot && (
+                        <TouchableOpacity
+                          style={styles.rootCatalogDeleteBtn}
+                          onPress={() => handleRootDelete(service)}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons name="trash-outline" size={14} color="#7E22CE" />
+                          <Text style={styles.rootCatalogDeleteText}>Delete (Root)</Text>
+                        </TouchableOpacity>
+                      )}
+                      <TouchableOpacity
+                        style={[
+                          styles.bookButton,
+                          isBooked && styles.bookedButton,
+                        ]}
+                        onPress={() => {
+                          if (isBooked) {
+                            Alert.alert(
+                              'Already Booked',
+                              `You have already placed a booking for "${service.title}". You can view its progress in the My Orders tab.`,
+                              [
+                                { text: 'Book Another', onPress: () => handleOpenBookingModal(service) },
+                                { text: 'OK', style: 'cancel' },
+                              ]
+                            );
+                          } else {
+                            handleOpenBookingModal(service);
+                          }
+                        }}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.bookButtonText}>
+                          {isBooked ? '✓ Booked' : 'Book Now'}
+                        </Text>
+                        <Ionicons
+                          name={isBooked ? 'checkmark-circle' : 'calendar-outline'}
+                          size={15}
+                          color="#FFFFFF"
+                        />
+                      </TouchableOpacity>
+                    </View>
                   </View>
                 </View>
               );
@@ -887,6 +922,27 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '800',
     color: Colors.primary,
+  },
+  footerActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  rootCatalogDeleteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FAF5FF',
+    borderWidth: 1,
+    borderColor: '#D8B4FE',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: BorderRadius.md,
+  },
+  rootCatalogDeleteText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#7E22CE',
   },
   bookButton: {
     backgroundColor: Colors.primary,

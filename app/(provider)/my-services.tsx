@@ -25,9 +25,9 @@ import { useSyncedServices } from '@/context/SyncContext';
 import { ProviderService } from '@/types';
 
 export default function MyServicesScreen() {
-  const { user, profile } = useAuth();
+  const { user, profile, isRoot } = useAuth();
   const currentProviderId = user?.id || profile?.id || 'prov-1';
-  const { providerServices, createService, toggleService, deleteService } = useSyncedServices(currentProviderId);
+  const { providerServices, createService, toggleService, deleteService } = useSyncedServices(currentProviderId, isRoot);
 
   const [modalVisible, setModalVisible] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -117,33 +117,34 @@ export default function MyServicesScreen() {
   };
 
   const handleToggle = async (service: ProviderService) => {
-    if (service.provider_id && service.provider_id !== currentProviderId) {
+    if (!isRoot && service.provider_id && service.provider_id !== currentProviderId) {
       Alert.alert('Permission Denied', 'You cannot modify a service created by another provider.');
       return;
     }
     try {
-      await toggleService(service.id, currentProviderId);
+      await toggleService(service.id, isRoot ? 'root' : currentProviderId);
     } catch (error: any) {
       Alert.alert('Error', error?.message || 'Failed to update service status.');
     }
   };
 
   const handleDelete = (service: ProviderService) => {
-    if (service.provider_id && service.provider_id !== currentProviderId) {
+    if (!isRoot && service.provider_id && service.provider_id !== currentProviderId) {
       Alert.alert('Permission Denied', 'You cannot delete a service created by another provider.');
       return;
     }
     Alert.alert(
-      'Delete Service Ad',
-      `Are you sure you want to delete "${service.title}"? This action cannot be undone.`,
+      isRoot ? '⚡ Root Superuser Delete' : 'Delete Service Ad',
+      `Are you sure you want to delete "${service.title}"? This action will permanently remove the ad from FixMate.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Delete',
+          text: isRoot ? 'Delete as Root' : 'Delete',
           style: 'destructive',
           onPress: async () => {
             try {
-              await deleteService(service.id, currentProviderId);
+              await deleteService(service.id, isRoot ? 'root' : currentProviderId);
+              Alert.alert('Deleted', 'Service ad has been permanently deleted.');
             } catch (error: any) {
               Alert.alert('Error', error?.message || 'Failed to delete service.');
             }
@@ -158,9 +159,21 @@ export default function MyServicesScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
       <Header
-        title="My Services"
-        subtitle="Manage your service ads, rates & availability"
+        title={isRoot ? 'All Services (Root)' : 'My Services'}
+        subtitle={isRoot ? 'Elevated privileges: View and delete any provider advertisement' : 'Manage your service ads, rates & availability'}
       />
+
+      {isRoot && (
+        <View style={styles.rootAdminAlert}>
+          <Ionicons name="shield-checkmark" size={20} color="#7E22CE" />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rootAdminAlertTitle}>⚡ Root Administrator Mode Active</Text>
+            <Text style={styles.rootAdminAlertSubtitle}>
+              Viewing all {services.length} services across all providers. You have superuser privileges to delete any ad.
+            </Text>
+          </View>
+        </View>
+      )}
 
       <View style={styles.topBar}>
         <View>
@@ -196,9 +209,19 @@ export default function MyServicesScreen() {
           services.map((service: ProviderService) => (
             <View key={service.id} style={styles.card}>
               <View style={styles.cardHeader}>
-                <View style={styles.categoryBadge}>
-                  <Ionicons name="briefcase-outline" size={13} color={Colors.primary} />
-                  <Text style={styles.categoryBadgeText}>{service.category}</Text>
+                <View style={styles.headerBadgesRow}>
+                  <View style={styles.categoryBadge}>
+                    <Ionicons name="briefcase-outline" size={13} color={Colors.primary} />
+                    <Text style={styles.categoryBadgeText}>{service.category}</Text>
+                  </View>
+                  {isRoot && (
+                    <View style={styles.rootOwnerPill}>
+                      <Ionicons name="person-circle-outline" size={13} color="#7E22CE" />
+                      <Text style={styles.rootOwnerText} numberOfLines={1}>
+                        {service.provider_name || service.provider_id}
+                      </Text>
+                    </View>
+                  )}
                 </View>
 
                 <View style={styles.statusToggleContainer}>
@@ -262,12 +285,23 @@ export default function MyServicesScreen() {
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={styles.deleteButton}
+                  style={[styles.deleteButton, isRoot && styles.rootDeleteButton]}
                   onPress={() => handleDelete(service)}
                   activeOpacity={0.7}
                 >
-                  <Ionicons name="trash-outline" size={16} color={Colors.danger} />
-                  <Text style={styles.deleteButtonText}>Delete</Text>
+                  <Ionicons
+                    name="trash-outline"
+                    size={16}
+                    color={isRoot ? '#7E22CE' : Colors.danger}
+                  />
+                  <Text
+                    style={[
+                      styles.deleteButtonText,
+                      isRoot && styles.rootDeleteButtonText,
+                    ]}
+                  >
+                    {isRoot ? 'Delete as Root' : 'Delete'}
+                  </Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -468,6 +502,50 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     marginTop: 2,
   },
+  rootAdminAlert: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FAF5FF',
+    borderWidth: 1,
+    borderColor: '#E9D5FF',
+    padding: Spacing.md,
+    marginHorizontal: Spacing.md,
+    marginTop: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    gap: 10,
+  },
+  rootAdminAlertTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#6B21A8',
+  },
+  rootAdminAlertSubtitle: {
+    fontSize: 11,
+    color: '#7E22CE',
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  headerBadgesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flex: 1,
+  },
+  rootOwnerPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F3E8FF',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: BorderRadius.full,
+    gap: 4,
+    maxWidth: 160,
+  },
+  rootOwnerText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#7E22CE',
+  },
   addButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -604,6 +682,15 @@ const styles = StyleSheet.create({
     color: Colors.danger,
     fontSize: 12,
     fontWeight: '600',
+  },
+  rootDeleteButton: {
+    backgroundColor: '#F3E8FF',
+    borderWidth: 1,
+    borderColor: '#D8B4FE',
+  },
+  rootDeleteButtonText: {
+    color: '#7E22CE',
+    fontWeight: '700',
   },
   modalOverlay: {
     flex: 1,

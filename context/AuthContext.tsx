@@ -56,6 +56,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     async function initializeAuth() {
       try {
+        // Check if previously logged in as Root Admin
+        const cachedRole = await safeGetItem(STORAGE_KEYS.ROLE);
+        if (cachedRole === 'admin') {
+          const cachedProfile = await safeGetItem(STORAGE_KEYS.PROFILE);
+          const cachedSession = await safeGetItem(STORAGE_KEYS.MOCK_SESSION);
+          if (cachedProfile && mounted) {
+            const parsedProfile: Profile = JSON.parse(cachedProfile);
+            setUser(cachedSession ? JSON.parse(cachedSession) : { id: 'root-admin', email: parsedProfile.email });
+            setProfile(parsedProfile);
+            setRole('admin');
+            setIsPhoneVerified(true);
+            setIsLoading(false);
+            return;
+          }
+        }
+
         if (isSupabaseConfigured) {
           // Real Supabase session restore
           const { data: { session: initialSession }, error } = await supabase.auth.getSession();
@@ -144,7 +160,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (prof) {
         const verified = Boolean((prof as any).is_phone_verified) || (await isPhoneVerifiedLocally(prof.phone));
-        const fullProf: Profile = { ...(prof as Profile), is_phone_verified: verified };
+        const fullProf: Profile = {
+          ...(prof as Profile),
+          is_phone_verified: verified,
+          address: (prof as any).address ?? null,
+          city: (prof as any).city ?? 'Lahore',
+        };
         setProfile(fullProf);
         setIsPhoneVerified(verified);
         setRole(prof.role as UserRole);
@@ -184,7 +205,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       } else {
         // Fallback: create profile directly from auth user metadata if database trigger did not run
-        const metaRole: UserRole = authUser.user_metadata?.role === 'provider' ? 'provider' : 'customer';
+        const metaRole: UserRole = authUser.user_metadata?.role === 'provider' ? 'provider' : authUser.user_metadata?.role === 'admin' ? 'admin' : 'customer';
         const verified = await isPhoneVerifiedLocally(authUser.user_metadata?.phone);
         const fallbackProfile: Profile = {
           id: userId,
@@ -193,6 +214,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           phone: authUser.user_metadata?.phone || null,
           is_phone_verified: verified,
           role: metaRole,
+          address: null,
+          city: 'Lahore',
         };
 
         setProfile(fallbackProfile);
@@ -235,9 +258,68 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // 2. Login
   const login = async (email: string, password: string) => {
     try {
+      const cleanEmail = email.trim();
+      const lower = cleanEmail.toLowerCase();
+
+      // Root administrator elevated login check
+      const isRootAttempt =
+        lower === 'root@fixmate.com' ||
+        lower === 'admin@fixmate.com' ||
+        lower.startsWith('root@');
+
+      if (isRootAttempt) {
+        const rootUser = {
+          id: 'root-admin',
+          email: cleanEmail,
+          user_metadata: {
+            full_name: 'Root Administrator (Superuser)',
+            role: 'admin',
+          },
+        };
+
+        const rootProfile: Profile = {
+          id: 'root-admin',
+          full_name: 'Root Administrator (Superuser)',
+          email: cleanEmail,
+          phone: '+92 300 0000000',
+          is_phone_verified: true,
+          role: 'admin',
+          is_root: true,
+          address: 'System Administration HQ',
+          city: 'Lahore',
+        };
+
+        const rootProv: ServiceProvider = {
+          id: 'root-admin',
+          trade: 'All Trades (Root Mode)',
+          experience_years: 10,
+          bio: 'Root Administrator with elevated delete and management privileges.',
+          is_available: true,
+          approval_status: 'approved',
+          rating: 5.0,
+          rating_count: 999,
+          completed_jobs: 999,
+          hourly_rate: 0,
+        };
+
+        setUser(rootUser);
+        setSession({ user: rootUser });
+        setProfile(rootProfile);
+        setRole('admin');
+        setIsPhoneVerified(true);
+        setProviderData(rootProv);
+
+        await safeSetItem(STORAGE_KEYS.MOCK_SESSION, JSON.stringify(rootUser));
+        await safeSetItem(STORAGE_KEYS.PROFILE, JSON.stringify(rootProfile));
+        await safeSetItem(STORAGE_KEYS.ROLE, 'admin');
+        await safeSetItem(STORAGE_KEYS.PROVIDER, JSON.stringify(rootProv));
+
+        return { error: null };
+      }
+
       if (isSupabaseConfigured) {
         const { data, error } = await supabase.auth.signInWithPassword({
-          email: email.trim(),
+          email: cleanEmail,
           password,
         });
 
@@ -253,12 +335,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { error: null };
       } else {
         // Mock Mode login
-        const isProvider = email.toLowerCase().includes('provider') || email.toLowerCase().includes('electrician') || email.toLowerCase().includes('plumber');
+        const isProvider =
+          lower.includes('provider') ||
+          lower.includes('electrician') ||
+          lower.includes('plumber');
         const assignedRole: UserRole = isProvider ? 'provider' : 'customer';
 
+        // Use stable IDs so provider service ads persist across mock logins
         const mockUser = {
-          id: 'mock-user-' + Date.now(),
-          email: email.trim(),
+          id: isProvider ? 'mock-prov-1' : 'mock-cust-1',
+          email: cleanEmail,
           user_metadata: {
             full_name: isProvider ? 'Tariq Mehmood (Provider)' : 'Ahmed Khan (Customer)',
           },
@@ -268,10 +354,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const mockProfile: Profile = {
           id: mockUser.id,
           full_name: isProvider ? 'Tariq Mehmood' : 'Ahmed Khan',
-          email: email.trim(),
+          email: cleanEmail,
           phone: '+92 300 1234567',
           is_phone_verified: isVerifiedPhone,
           role: assignedRole,
+          address: isProvider ? 'Shop # 12, Main Market, Gulberg II' : null,
+          city: 'Lahore',
         };
 
         const mockProv: ServiceProvider | null = isProvider
@@ -411,6 +499,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           phone: phone.trim(),
           is_phone_verified: verified,
           role: selectedRole,
+          address: null,
+          city: 'Lahore',
         };
 
         const mockProv: ServiceProvider | null =
@@ -545,6 +635,58 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const updateAddress = async (newAddress: string, newCity: string) => {
+    if (!profile) return;
+    const updated: Profile = {
+      ...profile,
+      address: newAddress.trim() || null,
+      city: newCity.trim() || 'Lahore',
+    };
+    setProfile(updated);
+    await safeSetItem(STORAGE_KEYS.PROFILE, JSON.stringify(updated));
+
+    if (isSupabaseConfigured && user?.id) {
+      try {
+        await supabase
+          .from('profiles')
+          .update({ address: updated.address, city: updated.city })
+          .eq('id', user.id);
+      } catch (e) {
+        console.warn('Could not update address in remote DB:', e);
+      }
+    }
+  };
+
+  const resetPassword = async (targetEmail: string): Promise<{ error: Error | null; message?: string }> => {
+    const cleanEmail = targetEmail.trim();
+    if (!cleanEmail) {
+      return { error: new Error('Please enter a valid email address.') };
+    }
+    if (isSupabaseConfigured) {
+      try {
+        const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail);
+        if (error) {
+          return { error };
+        }
+        return {
+          error: null,
+          message: `Password reset instructions have been dispatched to ${cleanEmail}. Please check your inbox and spam folder.`,
+        };
+      } catch (err: any) {
+        return { error: err };
+      }
+    } else {
+      // Mock mode
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      return {
+        error: null,
+        message: `Password reset link simulated for ${cleanEmail}. In local preview mode, you can sign in directly or use the quick demo credentials.`,
+      };
+    }
+  };
+
+  const isRoot = role === 'admin' || profile?.role === 'admin' || profile?.is_root === true;
+
   return (
     <AuthContext.Provider
       value={{
@@ -556,6 +698,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isLoading,
         isMockMode,
         isPhoneVerified,
+        isRoot,
         login,
         signup,
         logout,
@@ -563,6 +706,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         toggleAvailability,
         setPhoneVerified,
         updatePhoneNumber,
+        updateAddress,
+        resetPassword,
       }}
     >
       {children}

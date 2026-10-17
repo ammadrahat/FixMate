@@ -7,23 +7,32 @@ import {
   TouchableOpacity,
   KeyboardAvoidingView,
   Platform,
+  Modal,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, Spacing, BorderRadius } from '@/constants/Theme';
+import { Colors, Spacing, BorderRadius, Shadows } from '@/constants/Theme';
 import { Input } from '@/components/Input';
 import { Button } from '@/components/Button';
 import { useAuth } from '@/context/AuthContext';
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { login } = useAuth();
+  const { login, resetPassword } = useAuth();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+
+  // Password reset modal states
+  const [resetModalVisible, setResetModalVisible] = useState(false);
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetMessage, setResetMessage] = useState('');
+  const [resetError, setResetError] = useState('');
 
   const [emailError, setEmailError] = useState('');
   const [passwordError, setPasswordError] = useState('');
@@ -73,13 +82,42 @@ export default function LoginScreen() {
     }
   };
 
-  const fillQuickDemo = (type: 'customer' | 'provider') => {
+  const handleSendResetPassword = async () => {
+    if (!resetEmail.trim()) {
+      setResetError('Please enter your email address');
+      return;
+    }
+    if (!/\S+@\S+\.\S+/.test(resetEmail.trim())) {
+      setResetError('Please enter a valid email address');
+      return;
+    }
+    setResetLoading(true);
+    setResetError('');
+    setResetMessage('');
+    try {
+      const { error, message } = await resetPassword(resetEmail.trim());
+      if (error) {
+        setResetError(error.message || 'Failed to send reset instructions.');
+      } else {
+        setResetMessage(message || 'Password reset link sent to your email.');
+      }
+    } catch (err: any) {
+      setResetError(err.message || 'An error occurred. Please try again.');
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
+  const fillQuickDemo = (type: 'customer' | 'provider' | 'root') => {
     if (type === 'customer') {
       setEmail('customer@fixmate.com');
       setPassword('password123');
-    } else {
+    } else if (type === 'provider') {
       setEmail('provider@fixmate.com');
       setPassword('password123');
+    } else {
+      setEmail('root@fixmate.com');
+      setPassword('rootadmin123');
     }
     setEmailError('');
     setPasswordError('');
@@ -150,6 +188,20 @@ export default function LoginScreen() {
               error={passwordError}
             />
 
+            <View style={styles.forgotPasswordRow}>
+              <TouchableOpacity
+                onPress={() => {
+                  setResetEmail(email.trim());
+                  setResetError('');
+                  setResetMessage('');
+                  setResetModalVisible(true);
+                }}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
+              </TouchableOpacity>
+            </View>
+
             <Button
               title="Sign In"
               variant="primary"
@@ -168,13 +220,19 @@ export default function LoginScreen() {
                 style={styles.demoPill}
                 onPress={() => fillQuickDemo('customer')}
               >
-                <Text style={styles.demoPillText}>Customer Account</Text>
+                <Text style={styles.demoPillText}>Customer</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.demoPill}
                 onPress={() => fillQuickDemo('provider')}
               >
-                <Text style={styles.demoPillText}>Provider Account</Text>
+                <Text style={styles.demoPillText}>Provider</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.demoPill, styles.rootDemoPill]}
+                onPress={() => fillQuickDemo('root')}
+              >
+                <Text style={styles.rootDemoPillText}>⚡ Root Mode</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -188,6 +246,82 @@ export default function LoginScreen() {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Password Reset Modal */}
+      <Modal
+        visible={resetModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setResetModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, Shadows.card]}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalIconBox}>
+                <Ionicons name="key-outline" size={24} color={Colors.primary} />
+              </View>
+              <Text style={styles.modalTitle}>Reset Password</Text>
+              <Text style={styles.modalSubtitle}>
+                Enter your account email to receive password reset instructions.
+              </Text>
+            </View>
+
+            {Boolean(resetError) && (
+              <View style={styles.modalErrorBox}>
+                <Ionicons name="alert-circle" size={16} color={Colors.danger} />
+                <Text style={styles.modalErrorText}>{resetError}</Text>
+              </View>
+            )}
+
+            {Boolean(resetMessage) ? (
+              <View style={styles.modalSuccessBox}>
+                <Ionicons name="checkmark-circle" size={32} color={Colors.success} />
+                <Text style={styles.modalSuccessText}>{resetMessage}</Text>
+                <Button
+                  title="Return to Login"
+                  variant="primary"
+                  size="md"
+                  onPress={() => setResetModalVisible(false)}
+                  style={{ marginTop: 14, width: '100%' }}
+                />
+              </View>
+            ) : (
+              <View style={{ width: '100%' }}>
+                <Input
+                  label="Registered Email"
+                  placeholder="name@example.com"
+                  value={resetEmail}
+                  onChangeText={(t) => {
+                    setResetEmail(t);
+                    if (resetError) setResetError('');
+                  }}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  icon="mail-outline"
+                />
+
+                <View style={styles.modalBtnRow}>
+                  <Button
+                    title="Cancel"
+                    variant="outline"
+                    size="md"
+                    onPress={() => setResetModalVisible(false)}
+                    style={{ flex: 1 }}
+                  />
+                  <Button
+                    title="Send Link"
+                    variant="primary"
+                    size="md"
+                    loading={resetLoading}
+                    onPress={handleSendResetPassword}
+                    style={{ flex: 1 }}
+                  />
+                </View>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -278,6 +412,24 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: Colors.primary,
   },
+  rootDemoPill: {
+    backgroundColor: '#FAF5FF',
+    borderColor: '#C084FC',
+  },
+  rootDemoPillText: {
+    color: '#7E22CE',
+    fontWeight: '700',
+  },
+  forgotPasswordRow: {
+    alignItems: 'flex-end',
+    marginTop: 4,
+    marginBottom: Spacing.sm,
+  },
+  forgotPasswordText: {
+    fontSize: 13,
+    color: Colors.primary,
+    fontWeight: '600',
+  },
   footer: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -293,5 +445,81 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: Colors.primary,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: Spacing.lg,
+  },
+  modalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.xl,
+    width: '100%',
+    maxWidth: 420,
+    alignItems: 'center',
+  },
+  modalHeader: {
+    alignItems: 'center',
+    marginBottom: Spacing.md,
+  },
+  modalIconBox: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: '#EEF2FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: Spacing.sm,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: Colors.text,
+    textAlign: 'center',
+  },
+  modalSubtitle: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    marginTop: 4,
+    lineHeight: 18,
+  },
+  modalErrorBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.dangerLight,
+    padding: Spacing.sm,
+    borderRadius: BorderRadius.sm,
+    marginBottom: Spacing.sm,
+    width: '100%',
+    gap: 6,
+  },
+  modalErrorText: {
+    color: Colors.danger,
+    fontSize: 12,
+    fontWeight: '500',
+    flex: 1,
+  },
+  modalSuccessBox: {
+    alignItems: 'center',
+    paddingVertical: Spacing.md,
+    width: '100%',
+  },
+  modalSuccessText: {
+    fontSize: 14,
+    color: Colors.text,
+    textAlign: 'center',
+    marginTop: 8,
+    lineHeight: 20,
+    fontWeight: '500',
+  },
+  modalBtnRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: Spacing.md,
+    width: '100%',
   },
 });

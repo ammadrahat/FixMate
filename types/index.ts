@@ -1,4 +1,4 @@
-export type UserRole = 'customer' | 'provider';
+export type UserRole = 'customer' | 'provider' | 'admin';
 
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
 
@@ -25,6 +25,9 @@ export interface Profile {
   is_phone_verified?: boolean;
   role: UserRole;
   avatar_url?: string | null;
+  address?: string | null;
+  city?: string | null;
+  is_root?: boolean;
   created_at?: string;
   updated_at?: string;
 }
@@ -93,6 +96,7 @@ export interface AuthContextType {
   isLoading: boolean;
   isMockMode: boolean;
   isPhoneVerified: boolean;
+  isRoot: boolean;
   login: (email: string, password: string) => Promise<{ error: Error | null }>;
   signup: (params: {
     fullName: string;
@@ -110,5 +114,7 @@ export interface AuthContextType {
   toggleAvailability: () => Promise<void>;
   setPhoneVerified: (phone: string) => Promise<void>;
   updatePhoneNumber: (phone: string, isVerified?: boolean) => Promise<void>;
+  updateAddress: (address: string, city: string) => Promise<void>;
+  resetPassword: (email: string) => Promise<{ error: Error | null; message?: string }>;
 }
 

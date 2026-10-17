@@ -23,7 +23,7 @@ export default function IndexGateway() {
   }
 
   // Role-based routing
-  if (role === 'provider') {
+  if (role === 'admin' || role === 'provider') {
     return <Redirect href="/(provider)" />;
   }
 

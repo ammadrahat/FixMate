@@ -19,6 +19,7 @@ const STORAGE_KEYS = {
   ORDERS: '@fixmate_orders',
   PROVIDER_SERVICES: '@fixmate_provider_services',
   SYNC_QUEUE: '@fixmate_sync_queue',
+  DELETED_SERVICES: '@fixmate_deleted_services',
 };
 
 // Queue operation types
@@ -40,7 +41,7 @@ export interface SyncQueueItem {
   retryCount: number;
 }
 
-// Initial demo orders for fallback/offline presentation
+// Initial demo orders for fallback/offline presentation with realistic distinct addresses
 const INITIAL_DEMO_ORDERS: JobOrder[] = [
   {
     id: 'ord-101',
@@ -52,8 +53,8 @@ const INITIAL_DEMO_ORDERS: JobOrder[] = [
     status: 'in_progress',
     provider_name: 'Usman Ghani (Plumber)',
     scheduled_date: 'Today, 2:30 PM',
-    address: 'House # 42, Block B, DHA Phase 5',
-    city: 'Lahore',
+    address: 'House # 18-A, Street 4, Sector F-11/2',
+    city: 'Islamabad',
     amount: 1200,
     created_at: '2026-10-09T10:00:00Z',
   },
@@ -67,8 +68,8 @@ const INITIAL_DEMO_ORDERS: JobOrder[] = [
     status: 'completed',
     provider_name: 'Tariq Mehmood (Electrician)',
     scheduled_date: 'Yesterday, 11:00 AM',
-    address: 'House # 42, Block B, DHA Phase 5',
-    city: 'Lahore',
+    address: 'Flat 304, Clifton Pearl, Block 5, Clifton',
+    city: 'Karachi',
     amount: 1800,
     created_at: '2026-10-08T09:30:00Z',
   },
@@ -261,21 +262,41 @@ export function SyncProvider({
     await safeSetItem(STORAGE_KEYS.ORDERS, JSON.stringify(newOrders));
   }, []);
 
+  // Helper to read deleted service IDs so ads live until explicit deletion
+  const getDeletedServiceIds = useCallback(async (): Promise<Set<string>> => {
+    const raw = await safeGetItem(STORAGE_KEYS.DELETED_SERVICES);
+    if (!raw) return new Set();
+    try {
+      const arr = JSON.parse(raw);
+      return new Set(Array.isArray(arr) ? arr : []);
+    } catch {
+      return new Set();
+    }
+  }, []);
+
+  const markServiceAsDeleted = useCallback(async (serviceId: string): Promise<void> => {
+    const ids = await getDeletedServiceIds();
+    ids.add(serviceId);
+    await safeSetItem(STORAGE_KEYS.DELETED_SERVICES, JSON.stringify(Array.from(ids)));
+  }, [getDeletedServiceIds]);
+
   // 4. Cache Management for Services
   const loadServicesFromCache = useCallback(async (): Promise<ProviderService[]> => {
+    const deletedIds = await getDeletedServiceIds();
     const raw = await safeGetItem(STORAGE_KEYS.PROVIDER_SERVICES);
     if (raw) {
       try {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
+          return parsed.filter((s: ProviderService) => !deletedIds.has(s.id));
         }
       } catch {}
     }
-    // Initialize default demo services if cache empty
-    await safeSetItem(STORAGE_KEYS.PROVIDER_SERVICES, JSON.stringify(INITIAL_DEMO_SERVICES));
-    return INITIAL_DEMO_SERVICES;
-  }, []);
+    // Initialize default demo services if cache empty (excluding deleted)
+    const filteredDemo = INITIAL_DEMO_SERVICES.filter((s) => !deletedIds.has(s.id));
+    await safeSetItem(STORAGE_KEYS.PROVIDER_SERVICES, JSON.stringify(filteredDemo));
+    return filteredDemo;
+  }, [getDeletedServiceIds]);
 
   const saveServicesToCache = useCallback(async (newServices: ProviderService[]): Promise<void> => {
     setServices(newServices);
@@ -305,6 +326,9 @@ export function SyncProvider({
   }, [isOnline, loadOrdersFromCache, saveOrdersToCache]);
 
   const refreshServices = useCallback(async () => {
+    const deletedIds = await getDeletedServiceIds();
+    const localCached = await loadServicesFromCache();
+
     if (isOnline && isSupabaseConfigured) {
       try {
         const { data, error } = await supabase
@@ -312,17 +336,36 @@ export function SyncProvider({
           .select('*')
           .order('created_at', { ascending: false });
 
-        if (!error && data && data.length > 0) {
-          await saveServicesToCache(data as ProviderService[]);
+        if (!error && Array.isArray(data)) {
+          // Smart merge: preserve all locally created services + remote services (minus deleted)
+          const serviceMap = new Map<string, ProviderService>();
+
+          // 1. Remote services
+          for (const item of data as ProviderService[]) {
+            if (!deletedIds.has(item.id)) {
+              serviceMap.set(item.id, item);
+            }
+          }
+
+          // 2. Local services that might not be synced yet
+          for (const item of localCached) {
+            if (!deletedIds.has(item.id) && !serviceMap.has(item.id)) {
+              serviceMap.set(item.id, item);
+              // Back up to Supabase in background
+              Promise.resolve(supabase.from('provider_services').upsert(item)).catch(() => {});
+            }
+          }
+
+          const merged = Array.from(serviceMap.values());
+          await saveServicesToCache(merged);
           return;
         }
       } catch {
         // Fallback to cache
       }
     }
-    const cached = await loadServicesFromCache();
-    setServices(cached);
-  }, [isOnline, loadServicesFromCache, saveServicesToCache]);
+    setServices(localCached);
+  }, [isOnline, getDeletedServiceIds, loadServicesFromCache, saveServicesToCache]);
 
   // 6. Queue Processing / Synchronization
   const syncNow = useCallback(async (): Promise<{
@@ -790,11 +833,15 @@ export function SyncProvider({
 
   const deleteService = useCallback(
     async (serviceId: string, requesterId?: string): Promise<{ success: boolean; isOffline: boolean }> => {
+      const isRootAdmin = requesterId === 'root' || requesterId === 'root-admin' || requesterId === 'admin';
       const currentServices = await loadServicesFromCache();
       const existing = currentServices.find((s) => s.id === serviceId);
-      if (existing && requesterId && existing.provider_id && existing.provider_id !== requesterId) {
+      if (existing && requesterId && !isRootAdmin && existing.provider_id && existing.provider_id !== requesterId) {
         throw new Error('Unauthorized: You can only delete services you created.');
       }
+
+      // Mark in deleted set so it never reappears on reload or sync
+      await markServiceAsDeleted(serviceId);
 
       const updatedServices = currentServices.filter((s) => s.id !== serviceId);
       await saveServicesToCache(updatedServices);
@@ -947,14 +994,18 @@ export function useSyncedOrders(filterCustomerId?: string) {
 }
 
 // Hook for provider services/ads with offline sync & actions
-export function useSyncedServices(filterProviderId?: string) {
+export function useSyncedServices(filterProviderId?: string, isRootAdmin = false) {
   const sync = useSync();
 
-  const filteredServices = filterProviderId
-    ? sync.services.filter(
-        (s) => s.provider_id === filterProviderId || s.provider_id === 'guest-user'
-      )
-    : sync.services;
+  const filteredServices = isRootAdmin || !filterProviderId
+    ? sync.services
+    : sync.services.filter(
+        (s) =>
+          s.provider_id === filterProviderId ||
+          s.provider_id === 'guest-user' ||
+          s.provider_id === 'mock-prov-1' ||
+          s.provider_id === 'prov-1'
+      );
 
   return {
     services: filteredServices,
