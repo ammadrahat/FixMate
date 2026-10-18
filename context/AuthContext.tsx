@@ -20,6 +20,7 @@ const STORAGE_KEYS = {
   ROLE: '@fixmate_role',
   MOCK_SESSION: '@fixmate_mock_session',
   PENDING_RESET_OTP: '@fixmate_pending_reset_otp',
+  PENDING_ROLE: '@fixmate_pending_role',
 };
 
 // Safe storage methods for SSR (Node.js) execution
@@ -162,6 +163,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const userId = authUser.id;
 
     try {
+      // Check if user has a pending role from Google sign-up
+      const pendingRole = (await safeGetItem(STORAGE_KEYS.PENDING_ROLE)) as UserRole | null;
+      if (pendingRole) {
+        await safeMultiRemove([STORAGE_KEYS.PENDING_ROLE]);
+      }
+
       const { data: prof, error: profError } = await supabase
         .from('profiles')
         .select('*')
@@ -169,21 +176,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .maybeSingle();
 
       if (prof) {
+        let effectiveRole = prof.role as UserRole;
+        // If user explicitly signed up with Google as provider, upgrade profile if currently customer
+        if (pendingRole === 'provider' && effectiveRole === 'customer') {
+          effectiveRole = 'provider';
+          await supabase.from('profiles').update({ role: 'provider' }).eq('id', userId);
+        }
+
+        const avatarUrl =
+          (prof as any).avatar_url ||
+          authUser.user_metadata?.avatar_url ||
+          authUser.user_metadata?.picture ||
+          null;
+
         const verified = Boolean((prof as any).is_phone_verified) || (await isPhoneVerifiedLocally(prof.phone));
         const fullProf: Profile = {
           ...(prof as Profile),
+          role: effectiveRole,
+          avatar_url: avatarUrl,
           is_phone_verified: verified,
           address: (prof as any).address ?? null,
           city: (prof as any).city ?? 'Lahore',
         };
         setProfile(fullProf);
         setIsPhoneVerified(verified);
-        setRole(prof.role as UserRole);
-        await safeSetItem(STORAGE_KEYS.ROLE, prof.role);
+        setRole(effectiveRole);
+        await safeSetItem(STORAGE_KEYS.ROLE, effectiveRole);
         await safeSetItem(STORAGE_KEYS.PROFILE, JSON.stringify(fullProf));
 
-
-        if (prof.role === 'provider') {
+        if (effectiveRole === 'provider') {
           const { data: prov } = await supabase
             .from('service_providers')
             .select('*')
@@ -215,13 +236,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       } else {
         // Fallback: create profile directly from auth user metadata if database trigger did not run
-        const metaRole: UserRole = authUser.user_metadata?.role === 'provider' ? 'provider' : authUser.user_metadata?.role === 'admin' ? 'admin' : 'customer';
+        const rawRole = pendingRole || authUser.user_metadata?.role;
+        const metaRole: UserRole = rawRole === 'provider' ? 'provider' : rawRole === 'admin' ? 'admin' : 'customer';
         const verified = await isPhoneVerifiedLocally(authUser.user_metadata?.phone);
+        const avatarUrl =
+          authUser.user_metadata?.avatar_url ||
+          authUser.user_metadata?.picture ||
+          null;
+
         const fallbackProfile: Profile = {
           id: userId,
-          full_name: authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'FixMate User',
+          full_name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || authUser.email?.split('@')[0] || 'FixMate User',
           email: authUser.email || '',
           phone: authUser.user_metadata?.phone || null,
+          avatar_url: avatarUrl,
           is_phone_verified: verified,
           role: metaRole,
           address: null,
@@ -233,7 +261,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setRole(metaRole);
         await safeSetItem(STORAGE_KEYS.ROLE, metaRole);
         await safeSetItem(STORAGE_KEYS.PROFILE, JSON.stringify(fallbackProfile));
-
 
         // Insert into public.profiles
         try {
@@ -1079,28 +1106,54 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   // 10. Google Sign-In via Supabase OAuth
-  const loginWithGoogle = async (): Promise<{ error: Error | null }> => {
+  const loginWithGoogle = async (
+    targetRole?: UserRole
+  ): Promise<{ error: Error | null; cancelled?: boolean }> => {
     try {
+      if (targetRole) {
+        await safeSetItem(STORAGE_KEYS.PENDING_ROLE, targetRole);
+      }
+
       if (isSupabaseConfigured) {
-        const redirectUrl = Linking.createURL('auth/callback', { scheme: 'fixmate' });
+        const isWeb = Platform.OS === 'web';
+        const redirectUrl = isWeb
+          ? (typeof window !== 'undefined' ? `${window.location.origin}/auth/callback` : Linking.createURL('auth/callback', { scheme: 'fixmate' }))
+          : Linking.createURL('auth/callback', { scheme: 'fixmate' });
+
         const { data, error } = await supabase.auth.signInWithOAuth({
           provider: 'google',
           options: {
             redirectTo: redirectUrl,
-            skipBrowserRedirect: Platform.OS !== 'web',
+            skipBrowserRedirect: !isWeb,
           },
         });
 
         if (error) return { error: error as any };
-        if (data?.url && Platform.OS !== 'web') {
+        if (data?.url && !isWeb) {
           const authRes = await WebBrowser.openAuthSessionAsync(data.url, redirectUrl);
           if (authRes.type === 'success' && authRes.url) {
             try {
-              const urlObj = new URL(authRes.url);
-              const hashParams = new URLSearchParams(urlObj.hash.replace(/^#/, ''));
-              const queryParams = urlObj.searchParams;
+              const cleanUrl = authRes.url;
+              const hashIdx = cleanUrl.indexOf('#');
+              const queryIdx = cleanUrl.indexOf('?');
+
+              const queryParams = new URLSearchParams(
+                queryIdx !== -1
+                  ? cleanUrl.substring(queryIdx + 1, hashIdx !== -1 && hashIdx > queryIdx ? hashIdx : undefined)
+                  : ''
+              );
+              const hashParams = new URLSearchParams(
+                hashIdx !== -1 ? cleanUrl.substring(hashIdx + 1) : ''
+              );
+
+              const errDesc = queryParams.get('error_description') || hashParams.get('error_description');
+              if (errDesc) {
+                return { error: new Error(decodeURIComponent(errDesc)) };
+              }
+
               const accessToken = hashParams.get('access_token') || queryParams.get('access_token');
               const refreshToken = hashParams.get('refresh_token') || queryParams.get('refresh_token');
+              const code = queryParams.get('code') || hashParams.get('code');
 
               if (accessToken && refreshToken) {
                 const { data: sData, error: sErr } = await supabase.auth.setSession({
@@ -1112,21 +1165,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   setUser(sData.user);
                   setSession(sData.session);
                   await loadSupabaseProfile(sData.user);
+                  return { error: null };
+                }
+              } else if (code) {
+                const { data: cData, error: cErr } = await supabase.auth.exchangeCodeForSession(code);
+                if (cErr) return { error: cErr as any };
+                if (cData.user) {
+                  setUser(cData.user);
+                  setSession(cData.session);
+                  await loadSupabaseProfile(cData.user);
+                  return { error: null };
                 }
               }
-            } catch (pErr) {
+            } catch (pErr: any) {
               console.warn('Error parsing Google OAuth redirect url:', pErr);
+              return { error: pErr };
             }
+          } else if (authRes.type === 'cancel' || authRes.type === 'dismiss') {
+            return { error: null, cancelled: true };
           }
         }
         return { error: null };
       } else {
         // Mock Mode: instant Google sign-in
+        const selectedRole: UserRole = targetRole || 'customer';
         const mockGoogleUser = {
           id: 'mock-google-user',
           email: 'google.user@fixmate.com',
           user_metadata: {
             full_name: 'Google User',
+            role: selectedRole,
             avatar_url: 'https://lh3.googleusercontent.com/a/default-user',
           },
         };
@@ -1134,18 +1202,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           id: 'mock-google-user',
           full_name: 'Google User',
           email: 'google.user@fixmate.com',
-          role: 'customer',
+          role: selectedRole,
           is_phone_verified: true,
           city: 'Lahore',
         };
+        const mockProv: ServiceProvider | null =
+          selectedRole === 'provider'
+            ? {
+                id: 'mock-google-user',
+                trade: 'Electrical Work',
+                experience_years: 4,
+                bio: 'Google Verified Professional Technician',
+                is_available: true,
+                approval_status: 'approved',
+                rating: 5.0,
+                rating_count: 12,
+                completed_jobs: 45,
+                hourly_rate: 1200,
+              }
+            : null;
+
         setUser(mockGoogleUser);
         setSession({ user: mockGoogleUser });
         setProfile(mockProfile);
-        setRole('customer');
+        setRole(selectedRole);
         setIsPhoneVerified(true);
+        if (mockProv) {
+          setProviderData(mockProv);
+        }
         await safeSetItem(STORAGE_KEYS.MOCK_SESSION, JSON.stringify(mockGoogleUser));
         await safeSetItem(STORAGE_KEYS.PROFILE, JSON.stringify(mockProfile));
-        await safeSetItem(STORAGE_KEYS.ROLE, 'customer');
+        await safeSetItem(STORAGE_KEYS.ROLE, selectedRole);
+        if (mockProv) {
+          await safeSetItem(STORAGE_KEYS.PROVIDER, JSON.stringify(mockProv));
+        }
         return { error: null };
       }
     } catch (err: any) {

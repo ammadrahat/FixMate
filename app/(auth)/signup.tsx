@@ -67,9 +67,11 @@ export default function SignupScreen() {
     setGoogleLoading(true);
     setErrorMessage('');
     try {
-      const { error } = await loginWithGoogle();
-      if (error) {
-        setErrorMessage(error.message || 'Google sign-up could not be completed.');
+      const res = await loginWithGoogle(role);
+      if (res?.error) {
+        setErrorMessage(res.error.message || 'Google sign-up could not be completed.');
+      } else if (res?.cancelled) {
+        // User closed the Google signup dialog
       } else {
         router.replace('/');
       }
