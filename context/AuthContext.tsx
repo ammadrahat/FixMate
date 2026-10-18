@@ -1108,7 +1108,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // 10. Google Sign-In via Supabase OAuth
   const loginWithGoogle = async (
     targetRole?: UserRole
-  ): Promise<{ error: Error | null; cancelled?: boolean }> => {
+  ): Promise<{ error: Error | null; cancelled?: boolean; inProgress?: boolean }> => {
     try {
       if (targetRole) {
         await safeSetItem(STORAGE_KEYS.PENDING_ROLE, targetRole);
@@ -1116,74 +1116,91 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (isSupabaseConfigured) {
         const isWeb = Platform.OS === 'web';
+        // Web: use current origin/auth/callback
+        // Native: use Linking.createURL('auth/callback') without hardcoded scheme so Expo Go uses exp:// and standalone APK uses fixmate://
         const redirectUrl = isWeb
-          ? (typeof window !== 'undefined' ? `${window.location.origin}/auth/callback` : Linking.createURL('auth/callback', { scheme: 'fixmate' }))
-          : Linking.createURL('auth/callback', { scheme: 'fixmate' });
+          ? (typeof window !== 'undefined' && window.location?.origin
+              ? `${window.location.origin}/auth/callback`
+              : Linking.createURL('auth/callback'))
+          : Linking.createURL('auth/callback');
 
         const { data, error } = await supabase.auth.signInWithOAuth({
           provider: 'google',
           options: {
             redirectTo: redirectUrl,
-            skipBrowserRedirect: !isWeb,
+            skipBrowserRedirect: true,
           },
         });
 
         if (error) return { error: error as any };
-        if (data?.url && !isWeb) {
-          const authRes = await WebBrowser.openAuthSessionAsync(data.url, redirectUrl);
-          if (authRes.type === 'success' && authRes.url) {
-            try {
-              const cleanUrl = authRes.url;
-              const hashIdx = cleanUrl.indexOf('#');
-              const queryIdx = cleanUrl.indexOf('?');
 
-              const queryParams = new URLSearchParams(
-                queryIdx !== -1
-                  ? cleanUrl.substring(queryIdx + 1, hashIdx !== -1 && hashIdx > queryIdx ? hashIdx : undefined)
-                  : ''
-              );
-              const hashParams = new URLSearchParams(
-                hashIdx !== -1 ? cleanUrl.substring(hashIdx + 1) : ''
-              );
+        if (!data?.url) {
+          return { error: new Error('No authorization URL returned from Supabase.') };
+        }
 
-              const errDesc = queryParams.get('error_description') || hashParams.get('error_description');
-              if (errDesc) {
-                return { error: new Error(decodeURIComponent(errDesc)) };
-              }
-
-              const accessToken = hashParams.get('access_token') || queryParams.get('access_token');
-              const refreshToken = hashParams.get('refresh_token') || queryParams.get('refresh_token');
-              const code = queryParams.get('code') || hashParams.get('code');
-
-              if (accessToken && refreshToken) {
-                const { data: sData, error: sErr } = await supabase.auth.setSession({
-                  access_token: accessToken,
-                  refresh_token: refreshToken,
-                });
-                if (sErr) return { error: sErr as any };
-                if (sData.user) {
-                  setUser(sData.user);
-                  setSession(sData.session);
-                  await loadSupabaseProfile(sData.user);
-                  return { error: null };
-                }
-              } else if (code) {
-                const { data: cData, error: cErr } = await supabase.auth.exchangeCodeForSession(code);
-                if (cErr) return { error: cErr as any };
-                if (cData.user) {
-                  setUser(cData.user);
-                  setSession(cData.session);
-                  await loadSupabaseProfile(cData.user);
-                  return { error: null };
-                }
-              }
-            } catch (pErr: any) {
-              console.warn('Error parsing Google OAuth redirect url:', pErr);
-              return { error: pErr };
-            }
-          } else if (authRes.type === 'cancel' || authRes.type === 'dismiss') {
-            return { error: null, cancelled: true };
+        // On Web: perform full-page browser redirect so it does not conflict with SPA routing
+        if (isWeb) {
+          if (typeof window !== 'undefined') {
+            window.location.href = data.url;
+            return { error: null, inProgress: true };
           }
+          return { error: new Error('Window object not available for web redirect.') };
+        }
+
+        // On Native (Expo Go, Dev Client, standalone APK): open in-app browser session
+        const authRes = await WebBrowser.openAuthSessionAsync(data.url, redirectUrl);
+        if (authRes.type === 'success' && authRes.url) {
+          try {
+            const cleanUrl = authRes.url;
+            const hashIdx = cleanUrl.indexOf('#');
+            const queryIdx = cleanUrl.indexOf('?');
+
+            const queryParams = new URLSearchParams(
+              queryIdx !== -1
+                ? cleanUrl.substring(queryIdx + 1, hashIdx !== -1 && hashIdx > queryIdx ? hashIdx : undefined)
+                : ''
+            );
+            const hashParams = new URLSearchParams(
+              hashIdx !== -1 ? cleanUrl.substring(hashIdx + 1) : ''
+            );
+
+            const errDesc = queryParams.get('error_description') || hashParams.get('error_description');
+            if (errDesc) {
+              return { error: new Error(decodeURIComponent(errDesc)) };
+            }
+
+            const accessToken = hashParams.get('access_token') || queryParams.get('access_token');
+            const refreshToken = hashParams.get('refresh_token') || queryParams.get('refresh_token');
+            const code = queryParams.get('code') || hashParams.get('code');
+
+            if (accessToken && refreshToken) {
+              const { data: sData, error: sErr } = await supabase.auth.setSession({
+                access_token: accessToken,
+                refresh_token: refreshToken,
+              });
+              if (sErr) return { error: sErr as any };
+              if (sData.user) {
+                setUser(sData.user);
+                setSession(sData.session);
+                await loadSupabaseProfile(sData.user);
+                return { error: null };
+              }
+            } else if (code) {
+              const { data: cData, error: cErr } = await supabase.auth.exchangeCodeForSession(code);
+              if (cErr) return { error: cErr as any };
+              if (cData.user) {
+                setUser(cData.user);
+                setSession(cData.session);
+                await loadSupabaseProfile(cData.user);
+                return { error: null };
+              }
+            }
+          } catch (pErr: any) {
+            console.warn('Error parsing Google OAuth redirect url:', pErr);
+            return { error: pErr };
+          }
+        } else if (authRes.type === 'cancel' || authRes.type === 'dismiss') {
+          return { error: null, cancelled: true };
         }
         return { error: null };
       } else {

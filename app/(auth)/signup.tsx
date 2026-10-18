@@ -70,14 +70,18 @@ export default function SignupScreen() {
       const res = await loginWithGoogle(role);
       if (res?.error) {
         setErrorMessage(res.error.message || 'Google sign-up could not be completed.');
+        setGoogleLoading(false);
       } else if (res?.cancelled) {
         // User closed the Google signup dialog
+        setGoogleLoading(false);
+      } else if (res?.inProgress) {
+        // Web navigation to Google is in progress; keep spinner active
       } else {
         router.replace('/');
+        setGoogleLoading(false);
       }
     } catch (err: any) {
       setErrorMessage(err.message || 'An error occurred during Google sign-up.');
-    } finally {
       setGoogleLoading(false);
     }
   };

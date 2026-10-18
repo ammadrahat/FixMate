@@ -2,19 +2,20 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as Linking from 'expo-linking';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { Colors } from '@/constants/Theme';
 
 export default function AuthCallback() {
   const router = useRouter();
-  const [statusMessage, setStatusMessage] = useState('Verifying your account...');
+  const [statusMessage, setStatusMessage] = useState('Verifying your Google account...');
 
   useEffect(() => {
     let isMounted = true;
 
     async function processUrl(urlToParse: string) {
       if (!urlToParse || !isSupabaseConfigured) {
-        if (isMounted) router.replace('/');
+        if (isMounted) router.replace('/(auth)/welcome');
         return;
       }
 
@@ -49,28 +50,91 @@ export default function AuthCallback() {
         const type = hashParams.get('type') || searchParams.get('type');
         const code = searchParams.get('code') || hashParams.get('code');
 
+        let authenticatedUser: any = null;
+
         if (accessToken && refreshToken) {
-          await supabase.auth.setSession({
+          const { data: sData, error: sErr } = await supabase.auth.setSession({
             access_token: accessToken,
             refresh_token: refreshToken,
           });
+          if (!sErr && sData?.user) {
+            authenticatedUser = sData.user;
+          }
           if (type === 'recovery') {
             if (isMounted) router.replace('/(auth)/login?reset_mode=direct');
             return;
           }
         } else if (code) {
-          const { error } = await supabase.auth.exchangeCodeForSession(code);
-          if (!error && type === 'recovery') {
+          const { data: cData, error: cErr } = await supabase.auth.exchangeCodeForSession(code);
+          if (!cErr && cData?.user) {
+            authenticatedUser = cData.user;
+          }
+          if (!cErr && type === 'recovery') {
             if (isMounted) router.replace('/(auth)/login?reset_mode=direct');
             return;
           }
+        } else {
+          // Check if session is already restored
+          const { data: currentSession } = await supabase.auth.getSession();
+          if (currentSession?.session?.user) {
+            authenticatedUser = currentSession.session.user;
+          }
+        }
+
+        if (authenticatedUser) {
+          if (isMounted) setStatusMessage('Setting up your dashboard...');
+
+          // Read pending role if this was a Google Sign-Up
+          let assignedRole = 'customer';
+          try {
+            const pendingRole = await AsyncStorage.getItem('@fixmate_pending_role');
+            if (pendingRole) {
+              await AsyncStorage.removeItem('@fixmate_pending_role');
+            }
+
+            const { data: prof } = await supabase
+              .from('profiles')
+              .select('role')
+              .eq('id', authenticatedUser.id)
+              .maybeSingle();
+
+            if (prof?.role) {
+              assignedRole = prof.role;
+              if (pendingRole === 'provider' && assignedRole === 'customer') {
+                assignedRole = 'provider';
+                await supabase.from('profiles').update({ role: 'provider' }).eq('id', authenticatedUser.id);
+                // Also ensure service_providers record exists
+                await supabase.from('service_providers').upsert({
+                  id: authenticatedUser.id,
+                  trade: 'Plumbing',
+                  experience_years: 2,
+                  bio: 'Skilled service professional on FixMate',
+                  is_available: true,
+                  approval_status: 'approved',
+                });
+              }
+            } else if (pendingRole === 'provider') {
+              assignedRole = 'provider';
+            }
+          } catch (rErr) {
+            console.warn('Error reading profile role:', rErr);
+          }
+
+          if (isMounted) {
+            if (assignedRole === 'provider' || assignedRole === 'admin') {
+              router.replace('/(provider)');
+            } else {
+              router.replace('/(customer)');
+            }
+          }
+          return;
         }
       } catch (pErr) {
         console.warn('URL parsing error in AuthCallback:', pErr);
       }
 
       if (isMounted) {
-        router.replace('/');
+        router.replace('/(auth)/welcome');
       }
     }
 
@@ -82,11 +146,11 @@ export default function AuthCallback() {
         if (currentUrl) {
           await processUrl(currentUrl);
         } else {
-          if (isMounted) router.replace('/');
+          if (isMounted) router.replace('/(auth)/welcome');
         }
       } catch (err) {
         console.warn('Error handling deep link callback:', err);
-        if (isMounted) router.replace('/');
+        if (isMounted) router.replace('/(auth)/welcome');
       }
     }
 

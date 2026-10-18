@@ -139,6 +139,8 @@ export interface AuthContextType {
     answer: string,
     newPassword: string
   ) => Promise<{ error: Error | null; message?: string }>;
-  loginWithGoogle: (role?: UserRole) => Promise<{ error: Error | null; cancelled?: boolean }>;
+  loginWithGoogle: (
+    role?: UserRole
+  ) => Promise<{ error: Error | null; cancelled?: boolean; inProgress?: boolean }>;
 }
 

@@ -103,14 +103,18 @@ export default function LoginScreen() {
       const res = await loginWithGoogle();
       if (res?.error) {
         setErrorMessage(res.error.message || 'Google sign-in could not be completed.');
+        setGoogleLoading(false);
       } else if (res?.cancelled) {
         // User closed the Google login dialog
+        setGoogleLoading(false);
+      } else if (res?.inProgress) {
+        // Web navigation to Google is in progress; keep spinner active
       } else {
         router.replace('/');
+        setGoogleLoading(false);
       }
     } catch (err: any) {
       setErrorMessage(err.message || 'An error occurred during Google sign-in.');
-    } finally {
       setGoogleLoading(false);
     }
   };
