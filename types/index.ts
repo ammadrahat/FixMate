@@ -127,5 +127,17 @@ export interface AuthContextType {
     newPassword: string,
     method?: 'email' | 'phone'
   ) => Promise<{ error: Error | null; message?: string }>;
+  saveSecurityQuestion: (
+    question: string,
+    answer: string
+  ) => Promise<{ error: Error | null }>;
+  getSecurityQuestion: (
+    email: string
+  ) => Promise<{ question: string | null; error: Error | null }>;
+  verifySecurityAnswer: (
+    email: string,
+    answer: string,
+    newPassword: string
+  ) => Promise<{ error: Error | null; message?: string }>;
 }
 

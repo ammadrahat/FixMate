@@ -31,7 +31,7 @@ import { UserRole } from '@/types';
 
 export default function SignupScreen() {
   const router = useRouter();
-  const { signup } = useAuth();
+  const { signup, saveSecurityQuestion } = useAuth();
 
   const [role, setRole] = useState<UserRole>('customer');
   const [fullName, setFullName] = useState('');
@@ -60,6 +60,18 @@ export default function SignupScreen() {
 
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+
+  // Security question (backup reset method)
+  const SECURITY_QUESTIONS = [
+    "What was the name of your first pet?",
+    "What is your mother's maiden name?",
+    "What was the name of your first school?",
+    "What is your favourite childhood movie?",
+    "What city were you born in?",
+  ];
+  const [securityQuestion, setSecurityQuestion] = useState(SECURITY_QUESTIONS[0]);
+  const [securityAnswer, setSecurityAnswer] = useState('');
+  const [showSqPicker, setShowSqPicker] = useState(false);
 
   // Errors state
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -133,12 +145,20 @@ export default function SignupScreen() {
       if (result.error) {
         setErrorMessage(result.error.message || 'Failed to create account.');
       } else if (result.needsEmailVerification) {
+        // Still save security question if answer provided
+        if (securityAnswer.trim()) {
+          await saveSecurityQuestion(securityQuestion, securityAnswer.trim()).catch(() => {});
+        }
         Alert.alert(
           'Verification Email Sent',
           'We have sent a confirmation link to your email. Please verify your address and log in.',
           [{ text: 'OK', onPress: () => router.replace('/(auth)/login') }]
         );
       } else {
+        // Save security question if provided
+        if (securityAnswer.trim()) {
+          await saveSecurityQuestion(securityQuestion, securityAnswer.trim()).catch(() => {});
+        }
         router.replace('/');
       }
     } catch (err: any) {
@@ -407,6 +427,59 @@ export default function SignupScreen() {
             </View>
           )}
 
+          {/* Security Question Section (for password reset fallback) */}
+          <View style={styles.sqSection}>
+            <View style={styles.sqHeader}>
+              <Ionicons name="shield-checkmark" size={18} color="#7C3AED" />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.sqTitle}>Security Question <Text style={styles.sqOptional}>(optional)</Text></Text>
+                <Text style={styles.sqDesc}>
+                  Used as a backup if you ever can't receive the email reset code.
+                </Text>
+              </View>
+            </View>
+
+            {/* Question picker */}
+            <Text style={styles.sqFieldLabel}>Security Question</Text>
+            <TouchableOpacity
+              style={styles.sqPickerBtn}
+              onPress={() => setShowSqPicker(!showSqPicker)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.sqPickerText} numberOfLines={2}>{securityQuestion}</Text>
+              <Ionicons name={showSqPicker ? 'chevron-up' : 'chevron-down'} size={16} color={Colors.textSecondary} />
+            </TouchableOpacity>
+
+            {showSqPicker && (
+              <View style={styles.sqDropdown}>
+                {SECURITY_QUESTIONS.map((q) => (
+                  <TouchableOpacity
+                    key={q}
+                    style={[styles.sqOption, securityQuestion === q && styles.sqOptionActive]}
+                    onPress={() => { setSecurityQuestion(q); setShowSqPicker(false); }}
+                  >
+                    <Text style={[styles.sqOptionText, securityQuestion === q && styles.sqOptionTextActive]}>
+                      {q}
+                    </Text>
+                    {securityQuestion === q && (
+                      <Ionicons name="checkmark" size={14} color={Colors.primary} />
+                    )}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            <Input
+              label="Your Answer"
+              placeholder="e.g. Fluffy (answer is not case-sensitive)"
+              value={securityAnswer}
+              onChangeText={setSecurityAnswer}
+              icon="chatbox-ellipses-outline"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+          </View>
+
           {/* Submit */}
           <Button
             title={role === 'provider' ? 'Register as Service Provider' : 'Create Customer Account'}
@@ -664,5 +737,59 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
+  // Security question styles
+  sqSection: {
+    marginTop: Spacing.lg,
+    backgroundColor: '#FAF5FF',
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: '#DDD6FE',
+    padding: Spacing.md,
+  },
+  sqHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginBottom: Spacing.md,
+  },
+  sqTitle: { fontSize: 14, fontWeight: '700', color: '#5B21B6' },
+  sqOptional: { fontSize: 12, fontWeight: '400', color: Colors.textSecondary },
+  sqDesc: { fontSize: 12, color: Colors.textSecondary, marginTop: 2, lineHeight: 16 },
+  sqFieldLabel: { fontSize: 13, fontWeight: '600', color: Colors.text, marginBottom: 6 },
+  sqPickerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderRadius: BorderRadius.sm,
+    borderWidth: 1,
+    borderColor: '#C4B5FD',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 4,
+    gap: 8,
+  },
+  sqPickerText: { fontSize: 13, color: Colors.text, flex: 1 },
+  sqDropdown: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: BorderRadius.sm,
+    borderWidth: 1,
+    borderColor: '#C4B5FD',
+    marginBottom: Spacing.sm,
+    overflow: 'hidden',
+  },
+  sqOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EDE9FE',
+    gap: 8,
+  },
+  sqOptionActive: { backgroundColor: '#F5F3FF' },
+  sqOptionText: { fontSize: 13, color: Colors.text, flex: 1 },
+  sqOptionTextActive: { fontWeight: '600', color: '#5B21B6' },
 });
 

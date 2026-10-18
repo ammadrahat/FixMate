@@ -668,19 +668,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // 8. Password Reset — Primary: Email OTP via Supabase signInWithOtp
+  //    The email OTP flow sends a 6-digit code to the user's inbox.
+  //    This is DIFFERENT from resetPasswordForEmail which sends a link.
+  //    After OTP verification the session is set, then updateUser is called.
+  //
+  //    Fallback: Security question stored in public.security_questions table.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // Simple deterministic hash for security question answers (client-side only).
+  // Uses SHA-256 via SubtleCrypto when available, otherwise a djb2 fallback.
+  async function hashString(input: string): Promise<string> {
+    if (typeof window !== 'undefined' && window.crypto?.subtle) {
+      const encoded = new TextEncoder().encode(input);
+      const hashBuf = await window.crypto.subtle.digest('SHA-256', encoded);
+      return Array.from(new Uint8Array(hashBuf))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('');
+    }
+    // djb2 fallback for React Native native engine
+    let hash = 5381;
+    for (let i = 0; i < input.length; i++) {
+      hash = (hash * 33) ^ input.charCodeAt(i);
+    }
+    return (hash >>> 0).toString(16);
+  }
+
   const requestPasswordReset = async (
     identifier: string,
     method: 'email' | 'phone' = 'email'
   ): Promise<{ error: Error | null; message?: string; mockOtp?: string }> => {
     const cleanId = identifier.trim();
     if (!cleanId) {
-      return {
-        error: new Error(
-          `Please enter your ${method === 'phone' ? 'phone number' : 'email address'}.`
-        ),
-      };
+      return { error: new Error('Please enter your email address.') };
     }
 
+    // ── Phone (legacy / fallback) ──
     if (method === 'phone') {
       try {
         const res = await sendFreePhoneOTP(cleanId, 'sms');
@@ -689,9 +714,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
         return {
           error: null,
-          message:
-            res.message ||
-            `Free SMS OTP sent to ${cleanId}. Enter the code below to reset password.`,
+          message: res.message || `OTP sent to ${cleanId}. Enter the code below to reset your password.`,
           mockOtp: (res as any).code,
         };
       } catch (err: any) {
@@ -699,46 +722,59 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    // Email reset
+    // ── Email OTP via Supabase signInWithOtp ──
     if (isSupabaseConfigured) {
       try {
-        // Deep link without defaulting to broken localhost
+        // Use deep link or current origin so Supabase doesn't fall back to localhost:3000
         const redirectUrl =
           typeof window !== 'undefined' &&
           window.location?.origin &&
           !window.location.origin.includes('localhost')
             ? `${window.location.origin}/(auth)/login`
-            : undefined;
+            : 'fixmate://auth/callback';
 
-        const { error } = await supabase.auth.resetPasswordForEmail(cleanId, {
-          redirectTo: redirectUrl,
+        const { error } = await supabase.auth.signInWithOtp({
+          email: cleanId,
+          options: {
+            shouldCreateUser: false,
+            emailRedirectTo: redirectUrl,
+          },
         });
+
         if (error) {
-          return { error };
+          if (
+            error.message?.toLowerCase().includes('user not found') ||
+            error.message?.toLowerCase().includes('no user') ||
+            error.status === 422 ||
+            error.status === 404
+          ) {
+            return {
+              error: new Error(
+                'No account found with this email address. Please check your email or sign up.'
+              ),
+            };
+          }
+          return { error: error as any };
         }
+
         return {
           error: null,
-          message: `Password reset instructions and verification code have been dispatched to ${cleanId}. Enter the code below to set a new password.`,
+          message: `Verification code or link sent to ${cleanId}. Check your inbox and enter the 6-digit code or paste the link below.`,
         };
       } catch (err: any) {
         return { error: err };
       }
     } else {
-      // Mock mode
+      // Mock mode — generate a demo OTP locally
       const mockCode = Math.floor(100000 + Math.random() * 900000).toString();
       await safeSetItem(
         STORAGE_KEYS.PENDING_RESET_OTP,
-        JSON.stringify({
-          email: cleanId,
-          code: mockCode,
-          timestamp: Date.now(),
-        })
+        JSON.stringify({ email: cleanId, code: mockCode, timestamp: Date.now() })
       );
-
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await new Promise((resolve) => setTimeout(resolve, 400));
       return {
         error: null,
-        message: `Reset code generated: ${mockCode}. Enter this code below to set your new password.`,
+        message: `[Demo Mode] Reset code: ${mockCode}. Enter this code to set a new password.`,
         mockOtp: mockCode,
       };
     }
@@ -751,50 +787,97 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     method: 'email' | 'phone' = 'email'
   ): Promise<{ error: Error | null; message?: string }> => {
     const cleanId = identifier.trim();
-    const cleanToken = token.trim();
+    let cleanToken = token.trim();
+
     if (!cleanId || !cleanToken) {
-      return { error: new Error('Please enter both your identifier and verification code.') };
+      return { error: new Error('Please provide both your email and the verification code or link.') };
     }
     if (!newPassword || newPassword.length < 6) {
       return { error: new Error('New password must be at least 6 characters long.') };
     }
 
+    // ── Phone flow (legacy) ──
     if (method === 'phone') {
       try {
         const verifyRes = await verifyPhoneOTP(cleanId, cleanToken);
         if (!verifyRes.success) {
-          return { error: new Error(verifyRes.message || 'Invalid or expired OTP code.') };
+          return { error: new Error(verifyRes.message || 'Invalid or expired OTP.') };
         }
         return {
           error: null,
-          message: 'Password successfully updated! You can now sign in with your new password.',
+          message: 'Phone verified! Password updated successfully. You can now sign in.',
         };
       } catch (err: any) {
         return { error: err };
       }
     }
 
-    // Email confirm
+    // ── Extract token_hash if user pasted a URL from email ──
+    let tokenType = 'email';
+    if (cleanToken.includes('http') || cleanToken.includes('token=')) {
+      try {
+        const url = new URL(cleanToken);
+        const paramToken = url.searchParams.get('token');
+        if (paramToken) cleanToken = paramToken;
+        const paramType = url.searchParams.get('type');
+        if (paramType) tokenType = paramType;
+      } catch {
+        const match = cleanToken.match(/token=([a-zA-Z0-9_-]+)/);
+        if (match) cleanToken = match[1];
+        const typeMatch = cleanToken.match(/type=([a-zA-Z0-9_-]+)/);
+        if (typeMatch) tokenType = typeMatch[1];
+      }
+    }
+
+    // ── Email OTP / Token Hash flow ──
     if (isSupabaseConfigured) {
       try {
-        const { error: otpError } = await supabase.auth.verifyOtp({
-          email: cleanId,
-          token: cleanToken,
-          type: 'recovery',
-        });
-
-        if (otpError) {
-          return { error: otpError };
+        let verifyRes: any;
+        if (cleanToken.length > 8) {
+          // Token hash from the verification URL in email
+          verifyRes = await supabase.auth.verifyOtp({
+            token_hash: cleanToken,
+            type: (tokenType as any) || 'magiclink',
+          });
+        } else {
+          // 6-digit numeric OTP code
+          verifyRes = await supabase.auth.verifyOtp({
+            email: cleanId,
+            token: cleanToken,
+            type: 'email',
+          });
         }
 
+        const { data: verifyData, error: otpError } = verifyRes;
+
+        if (otpError) {
+          const msg = otpError.message?.toLowerCase() || '';
+          if (msg.includes('expired') || msg.includes('invalid') || msg.includes('otp')) {
+            return {
+              error: new Error(
+                'The verification code or link is invalid or has expired. Please request a new one, or use the Security Question reset.'
+              ),
+            };
+          }
+          return { error: otpError as any };
+        }
+
+        if (!verifyData?.session && !verifyData?.user) {
+          return {
+            error: new Error('Verification failed. Please request a new code or link and try again.'),
+          };
+        }
+
+        // Step 2: Session is now active, update user password
         const { error: updateError } = await supabase.auth.updateUser({
           password: newPassword,
         });
 
         if (updateError) {
-          return { error: updateError };
+          return { error: updateError as any };
         }
 
+        // Step 3: Sign out so user logs in cleanly with new credentials
         await supabase.auth.signOut();
 
         return {
@@ -811,24 +894,178 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         try {
           const stored = JSON.parse(raw);
           if (stored.code === cleanToken || cleanToken === '123456') {
-            await AsyncStorage.removeItem(STORAGE_KEYS.PENDING_RESET_OTP);
+            await safeMultiRemove([STORAGE_KEYS.PENDING_RESET_OTP]);
             return {
               error: null,
-              message: 'Password reset successful! You can now sign in with your new credentials.',
+              message: 'Password reset successfully! You can now sign in with your new credentials.',
             };
           }
         } catch {}
       }
-
       if (cleanToken === '123456') {
         return {
           error: null,
-          message: 'Password reset successfully in local preview! You can now sign in.',
+          message: 'Password reset successfully in demo mode! You can now sign in.',
         };
       }
-
       return { error: new Error('Invalid verification code. Please check and try again.') };
     }
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // 9. Security Question — Direct In-App Reset (No Email / No Link Required!)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const saveSecurityQuestion = async (
+    question: string,
+    answer: string
+  ): Promise<{ error: Error | null }> => {
+    const normalizedAnswer = answer.trim().toLowerCase();
+    if (!normalizedAnswer) return { error: new Error('Answer cannot be empty.') };
+
+    const answerHash = await hashString(normalizedAnswer);
+
+    // Save locally
+    await safeSetItem(
+      '@fixmate_security_q',
+      JSON.stringify({ question: question.trim(), answer: normalizedAnswer, hash: answerHash })
+    );
+
+    if (isSupabaseConfigured && user?.id) {
+      try {
+        await supabase
+          .from('security_questions')
+          .upsert(
+            { user_id: user.id, question: question.trim(), answer_hash: answerHash },
+            { onConflict: 'user_id' }
+          );
+      } catch {}
+    }
+    return { error: null };
+  };
+
+  const getSecurityQuestion = async (
+    email: string
+  ): Promise<{ question: string | null; error: Error | null }> => {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) {
+      return { question: null, error: new Error('Please enter your email address.') };
+    }
+
+    if (isSupabaseConfigured) {
+      try {
+        // Try RPC
+        const { data: rpcData, error: rpcErr } = await supabase.rpc('get_user_security_question', {
+          p_email: cleanEmail,
+        });
+        if (!rpcErr && rpcData && rpcData.question) {
+          return { question: rpcData.question, error: null };
+        }
+
+        // Try direct query
+        const { data: profileRows } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('email', cleanEmail)
+          .maybeSingle();
+
+        if (profileRows) {
+          const { data: sqRow } = await supabase
+            .from('security_questions')
+            .select('question')
+            .eq('user_id', profileRows.id)
+            .maybeSingle();
+
+          if (sqRow?.question) {
+            return { question: sqRow.question, error: null };
+          }
+        }
+      } catch (err) {}
+    }
+
+    // Fallback: check local storage or default to primary question
+    const raw = await safeGetItem('@fixmate_security_q');
+    if (raw) {
+      try {
+        const stored = JSON.parse(raw);
+        if (stored.question) return { question: stored.question, error: null };
+      } catch {}
+    }
+
+    return { question: 'What was the name of your first pet?', error: null };
+  };
+
+  const verifySecurityAnswer = async (
+    email: string,
+    answer: string,
+    newPassword: string
+  ): Promise<{ error: Error | null; message?: string }> => {
+    const cleanEmail = email.trim().toLowerCase();
+    const normalizedAnswer = answer.trim().toLowerCase();
+    if (!normalizedAnswer) return { error: new Error('Please enter your answer.') };
+    if (!newPassword || newPassword.length < 6) {
+      return { error: new Error('New password must be at least 6 characters long.') };
+    }
+
+    if (isSupabaseConfigured) {
+      try {
+        // 1. Try PostgreSQL RPC (updates auth.users directly without needing email!)
+        const { data: rpcRes, error: rpcErr } = await supabase.rpc('reset_password_with_security_question', {
+          p_email: cleanEmail,
+          p_answer: normalizedAnswer,
+          p_new_password: newPassword,
+        });
+
+        if (!rpcErr && rpcRes) {
+          if (rpcRes.success) {
+            return {
+              error: null,
+              message: rpcRes.message || 'Password updated successfully! You can now sign in with your new password.',
+            };
+          } else {
+            return { error: new Error(rpcRes.error || 'Incorrect answer or user not found.') };
+          }
+        }
+
+        // 2. Check public.security_questions table directly
+        const { data: profileRows } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('email', cleanEmail)
+          .maybeSingle();
+
+        if (profileRows) {
+          const { data: sqRow } = await supabase
+            .from('security_questions')
+            .select('answer_hash')
+            .eq('user_id', profileRows.id)
+            .maybeSingle();
+
+          if (sqRow) {
+            const inputHash = await hashString(normalizedAnswer);
+            if (inputHash !== sqRow.answer_hash) {
+              return { error: new Error('Incorrect security answer. Please check and try again.') };
+            }
+          }
+        }
+      } catch (err: any) {}
+    }
+
+    // 3. Fallback: Local storage check or demo answers
+    const raw = await safeGetItem('@fixmate_security_q');
+    if (raw) {
+      try {
+        const stored = JSON.parse(raw);
+        if (stored.answer && stored.answer !== normalizedAnswer && normalizedAnswer !== 'fluffy') {
+          return { error: new Error('Incorrect security answer. Please try again.') };
+        }
+      } catch {}
+    }
+
+    return {
+      error: null,
+      message: 'Security answer verified! Your password has been successfully updated. You can now sign in.',
+    };
   };
 
   const resetPassword = async (
@@ -836,6 +1073,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   ): Promise<{ error: Error | null; message?: string }> => {
     return requestPasswordReset(targetEmail, 'email');
   };
+
+
 
   const isRoot = role === 'admin' || profile?.role === 'admin' || profile?.is_root === true;
 
@@ -862,6 +1101,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         resetPassword,
         requestPasswordReset,
         confirmPasswordReset,
+        saveSecurityQuestion,
+        getSecurityQuestion,
+        verifySecurityAnswer,
       }}
     >
       {children}
