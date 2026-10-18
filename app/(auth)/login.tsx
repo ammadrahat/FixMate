@@ -30,6 +30,7 @@ export default function LoginScreen() {
   const router = useRouter();
   const {
     login,
+    loginWithGoogle,
     requestPasswordReset,
     confirmPasswordReset,
     getSecurityQuestion,
@@ -40,6 +41,7 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [emailError, setEmailError] = useState('');
   const [passwordError, setPasswordError] = useState('');
@@ -91,6 +93,23 @@ export default function LoginScreen() {
       setErrorMessage(err.message || 'An unexpected error occurred.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setGoogleLoading(true);
+    setErrorMessage('');
+    try {
+      const { error } = await loginWithGoogle();
+      if (error) {
+        setErrorMessage(error.message || 'Google sign-in could not be completed.');
+      } else {
+        router.replace('/');
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'An error occurred during Google sign-in.');
+    } finally {
+      setGoogleLoading(false);
     }
   };
 
@@ -522,6 +541,28 @@ export default function LoginScreen() {
               onPress={handleLogin}
               style={styles.submitButton}
             />
+
+            <View style={styles.orDivider}>
+              <View style={styles.orLine} />
+              <Text style={styles.orText}>or</Text>
+              <View style={styles.orLine} />
+            </View>
+
+            <TouchableOpacity
+              style={styles.googleButton}
+              onPress={handleGoogleSignIn}
+              disabled={googleLoading}
+              activeOpacity={0.8}
+            >
+              {googleLoading ? (
+                <ActivityIndicator size="small" color={Colors.text} />
+              ) : (
+                <>
+                  <Ionicons name="logo-google" size={18} color="#EA4335" />
+                  <Text style={styles.googleButtonText}>Continue with Google</Text>
+                </>
+              )}
+            </TouchableOpacity>
           </View>
 
           {/* Demo helper */}
@@ -641,6 +682,41 @@ const styles = StyleSheet.create({
   forgotRow: { alignItems: 'flex-end', marginTop: 4, marginBottom: Spacing.sm },
   forgotText: { fontSize: 13, color: Colors.primary, fontWeight: '600' },
   submitButton: { marginTop: Spacing.md },
+
+  orDivider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 14,
+    gap: 8,
+  },
+  orLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#E2E8F0',
+  },
+  orText: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    fontWeight: '600',
+  },
+  googleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: BorderRadius.md,
+    paddingVertical: 12,
+    paddingHorizontal: Spacing.md,
+    gap: 10,
+    ...Shadows.card,
+  },
+  googleButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.text,
+  },
 
   demoHelper: {
     marginTop: Spacing.xl, padding: Spacing.md,

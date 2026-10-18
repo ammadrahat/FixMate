@@ -8,6 +8,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -31,7 +32,7 @@ import { UserRole } from '@/types';
 
 export default function SignupScreen() {
   const router = useRouter();
-  const { signup, saveSecurityQuestion } = useAuth();
+  const { signup, saveSecurityQuestion, loginWithGoogle } = useAuth();
 
   const [role, setRole] = useState<UserRole>('customer');
   const [fullName, setFullName] = useState('');
@@ -59,7 +60,25 @@ export default function SignupScreen() {
   const [bio, setBio] = useState('');
 
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+
+  const handleGoogleSignUp = async () => {
+    setGoogleLoading(true);
+    setErrorMessage('');
+    try {
+      const { error } = await loginWithGoogle();
+      if (error) {
+        setErrorMessage(error.message || 'Google sign-up could not be completed.');
+      } else {
+        router.replace('/');
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'An error occurred during Google sign-up.');
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
 
   // Security question (backup reset method)
   const SECURITY_QUESTIONS = [
@@ -490,6 +509,28 @@ export default function SignupScreen() {
             style={styles.submitButton}
           />
 
+          <View style={styles.orDivider}>
+            <View style={styles.orLine} />
+            <Text style={styles.orText}>or</Text>
+            <View style={styles.orLine} />
+          </View>
+
+          <TouchableOpacity
+            style={styles.googleButton}
+            onPress={handleGoogleSignUp}
+            disabled={googleLoading}
+            activeOpacity={0.8}
+          >
+            {googleLoading ? (
+              <ActivityIndicator size="small" color={Colors.text} />
+            ) : (
+              <>
+                <Ionicons name="logo-google" size={18} color="#EA4335" />
+                <Text style={styles.googleButtonText}>Sign up with Google</Text>
+              </>
+            )}
+          </TouchableOpacity>
+
           {/* Footer */}
           <View style={styles.footer}>
             <Text style={styles.footerText}>Already have an account? </Text>
@@ -791,5 +832,40 @@ const styles = StyleSheet.create({
   sqOptionActive: { backgroundColor: '#F5F3FF' },
   sqOptionText: { fontSize: 13, color: Colors.text, flex: 1 },
   sqOptionTextActive: { fontWeight: '600', color: '#5B21B6' },
+
+  orDivider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 14,
+    gap: 8,
+  },
+  orLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#E2E8F0',
+  },
+  orText: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    fontWeight: '600',
+  },
+  googleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: BorderRadius.md,
+    paddingVertical: 12,
+    paddingHorizontal: Spacing.md,
+    gap: 10,
+    ...Shadows.card,
+  },
+  googleButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.text,
+  },
 });
 

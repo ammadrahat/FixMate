@@ -139,5 +139,6 @@ export interface AuthContextType {
     answer: string,
     newPassword: string
   ) => Promise<{ error: Error | null; message?: string }>;
+  loginWithGoogle: () => Promise<{ error: Error | null }>;
 }
 

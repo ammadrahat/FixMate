@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as WebBrowser from 'expo-web-browser';
+import * as Linking from 'expo-linking';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { AuthContextType, Profile, ServiceProvider, UserRole } from '@/types';
 import {
@@ -9,6 +11,8 @@ import {
   sendFreePhoneOTP,
   verifyPhoneOTP,
 } from '@/lib/phoneVerification';
+
+WebBrowser.maybeCompleteAuthSession();
 
 const STORAGE_KEYS = {
   PROFILE: '@fixmate_profile',
@@ -1074,7 +1078,80 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return requestPasswordReset(targetEmail, 'email');
   };
 
+  // 10. Google Sign-In via Supabase OAuth
+  const loginWithGoogle = async (): Promise<{ error: Error | null }> => {
+    try {
+      if (isSupabaseConfigured) {
+        const redirectUrl = Linking.createURL('auth/callback', { scheme: 'fixmate' });
+        const { data, error } = await supabase.auth.signInWithOAuth({
+          provider: 'google',
+          options: {
+            redirectTo: redirectUrl,
+            skipBrowserRedirect: Platform.OS !== 'web',
+          },
+        });
 
+        if (error) return { error: error as any };
+        if (data?.url && Platform.OS !== 'web') {
+          const authRes = await WebBrowser.openAuthSessionAsync(data.url, redirectUrl);
+          if (authRes.type === 'success' && authRes.url) {
+            try {
+              const urlObj = new URL(authRes.url);
+              const hashParams = new URLSearchParams(urlObj.hash.replace(/^#/, ''));
+              const queryParams = urlObj.searchParams;
+              const accessToken = hashParams.get('access_token') || queryParams.get('access_token');
+              const refreshToken = hashParams.get('refresh_token') || queryParams.get('refresh_token');
+
+              if (accessToken && refreshToken) {
+                const { data: sData, error: sErr } = await supabase.auth.setSession({
+                  access_token: accessToken,
+                  refresh_token: refreshToken,
+                });
+                if (sErr) return { error: sErr as any };
+                if (sData.user) {
+                  setUser(sData.user);
+                  setSession(sData.session);
+                  await loadSupabaseProfile(sData.user);
+                }
+              }
+            } catch (pErr) {
+              console.warn('Error parsing Google OAuth redirect url:', pErr);
+            }
+          }
+        }
+        return { error: null };
+      } else {
+        // Mock Mode: instant Google sign-in
+        const mockGoogleUser = {
+          id: 'mock-google-user',
+          email: 'google.user@fixmate.com',
+          user_metadata: {
+            full_name: 'Google User',
+            avatar_url: 'https://lh3.googleusercontent.com/a/default-user',
+          },
+        };
+        const mockProfile: Profile = {
+          id: 'mock-google-user',
+          full_name: 'Google User',
+          email: 'google.user@fixmate.com',
+          role: 'customer',
+          is_phone_verified: true,
+          city: 'Lahore',
+        };
+        setUser(mockGoogleUser);
+        setSession({ user: mockGoogleUser });
+        setProfile(mockProfile);
+        setRole('customer');
+        setIsPhoneVerified(true);
+        await safeSetItem(STORAGE_KEYS.MOCK_SESSION, JSON.stringify(mockGoogleUser));
+        await safeSetItem(STORAGE_KEYS.PROFILE, JSON.stringify(mockProfile));
+        await safeSetItem(STORAGE_KEYS.ROLE, 'customer');
+        return { error: null };
+      }
+    } catch (err: any) {
+      return { error: err };
+    }
+  };
 
   const isRoot = role === 'admin' || profile?.role === 'admin' || profile?.is_root === true;
 
@@ -1104,6 +1181,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         saveSecurityQuestion,
         getSecurityQuestion,
         verifySecurityAnswer,
+        loginWithGoogle,
       }}
     >
       {children}
