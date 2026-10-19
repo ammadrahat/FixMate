@@ -3,14 +3,15 @@
 # dev-start.sh — FixMate Development Workflow
 # ------------------------------------------------------------
 # 1. Commits & pushes any pending changes to GitHub
-# 2. Starts Expo Go dev server (tunnel mode for phone access)
+# 2. Starts Expo dev server (tunnel mode — phone connects
+#    to your dev client APK and gets live JS updates)
 # ============================================================
 
 set -e
 
 echo ""
 echo "╔══════════════════════════════════════╗"
-echo "║     FixMate Dev Server Launcher      ║"
+echo "║   FixMate Dev Server (Live Reload)   ║"
 echo "╚══════════════════════════════════════╝"
 echo ""
 
@@ -32,9 +33,14 @@ echo "✅ Pushed."
 
 # ── Step 2: Start Expo dev server ─────────────────────────────
 echo ""
-echo "📱 Starting Expo Go dev server (tunnel mode)..."
-echo "   → Scan the QR code with Expo Go on your phone"
-echo "   → Press 'a' for Android emulator, 'i' for iOS simulator"
+echo "╔══════════════════════════════════════════════════════╗"
+echo "║  📱 HOW TO GET LIVE CHANGES ON YOUR PHONE           ║"
+echo "║                                                      ║"
+echo "║  1. Make sure the FixMate dev APK is installed       ║"
+echo "║     (from expo.dev build or QR from build email)    ║"
+echo "║  2. Open the FixMate dev app on your phone           ║"
+echo "║  3. Scan the QR code below OR enter the URL shown   ║"
+echo "║  4. Every JS change you save = instantly on phone ⚡  ║"
+echo "╚══════════════════════════════════════════════════════╝"
 echo ""
 ELECTRON_DISABLE_SANDBOX=1 npx expo start --tunnel
-
