@@ -33,7 +33,11 @@
     "start": "ELECTRON_DISABLE_SANDBOX=1 expo start",
     "android": "ELECTRON_DISABLE_SANDBOX=1 expo start --android",
     "ios": "ELECTRON_DISABLE_SANDBOX=1 expo start --ios",
-    "web": "ELECTRON_DISABLE_SANDBOX=1 expo start --web"
+    "web": "ELECTRON_DISABLE_SANDBOX=1 expo start --web",
+    "dev:tunnel": "ELECTRON_DISABLE_SANDBOX=1 expo start --tunnel",
+    "dev:go": "bash dev-start.sh",
+    "build:preview": "bash build-preview.sh",
+    "build:apk": "eas build --profile preview --platform android --non-interactive"
   },
   "private": true
 }
